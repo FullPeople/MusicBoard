@@ -1,0 +1,33 @@
+# 构建产物
+/build/
+/out/
+/dist/
+
+# 日志不入库
+/logs/
+
+# 证据目录：只保留被验收记录直接引用的少量产物（图与文本），
+# 其余大体积的临时输出不入库 —— 它们可重生成，且不该让仓库膨胀。
+/evidence/*
+!/evidence/*.png
+!/evidence/*.txt
+
+# 编辑器
+/.vs/
+/.vscode/
+/tools/__pycache__/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+
+# MSVC 中间产物
+*.pdb
+*.ilk
+*.obj
+*.tlog
+*.lastbuildstate
+*.log
+
+# 运行期产物（真实程序会在 %LOCALAPPDATA% 下写，这里兜住本地调试）
+/*.tmp
