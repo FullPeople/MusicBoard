@@ -69,13 +69,16 @@ void test_path_utf8(Registry& r) {
     r.check(utf8.find("休整") != std::string::npos, "path_to_utf8: 中文内容完整保留");
     r.check(utf8.find("\xEF\xBD\x9C") != std::string::npos, "path_to_utf8: 全角竖线按 UTF-8 编码");
 
-    // 这一条是"为什么必须有单一边界"的现场证据：
-    // path.string() 走本地代码页(936)，字节数与 UTF-8 不同，混用必坏。
-    const std::size_t narrow_size = path.string().size();
-    const std::size_t utf8_size = utf8.size();
-    r.check_eq(narrow_size != utf8_size,
-               "path.string() 与 path_to_utf8() 字节数不同（编码差异实证）",
-               "narrow=" + std::to_string(narrow_size) + " utf8=" + std::to_string(utf8_size));
+    // The expectation is authored independently of the conversion under test.
+    // Never call path.string() even as a demonstration: a non-Chinese system
+    // code page can reject this filename and terminate an exception-free test.
+    r.check_eq(utf8 == "[低][休整] 和平 水边 轻松｜Fast Food.mp3",
+               "path_to_utf8: 全部字节匹配独立 UTF-8 期望值", "actual=" + utf8);
+    const std::filesystem::path supplementary(L"\U0001F3B5.mp3");
+    const std::string supplementary_utf8 = path_to_utf8(supplementary);
+    r.check_eq(supplementary_utf8 == "\xF0\x9F\x8E\xB5.mp3",
+               "path_to_utf8: UTF-16 代理对转换为四字节 UTF-8",
+               "actual=" + supplementary_utf8);
 
     std::filesystem::path round_tripped;
     Failure failure;
