@@ -124,6 +124,9 @@ int main() {
         };
 
         registry.check(has("--no-playlist"), "不带播放列表（用户点的是一个链接）");
+        registry.check(has("--ignore-config"), "用户下载器配置不改变音乐板的导入行为");
+        registry.check(has("before_dl:MUSICBOARD_SOURCE_DURATION=%(duration)s") && has("--no-simulate"),
+            "读取来源时长时仍实际下载");
         registry.check(has("--newline"), "按行输出进度（增量解析的前提）");
         registry.check(has("--progress"), "要进度输出");
         registry.check(has("--no-colors"), "进度行里不要终端转义序列");
@@ -221,9 +224,9 @@ int main() {
             [&] { job.pump(); }, 20000);
         registry.check(ended, "失败用例结束了（没有一直等）");
         registry.check(job.status().state == ImportJobState::failed, "状态是 failed");
-        registry.check(job.status().failure_reason.find("404") != std::string::npos,
+        registry.check(job.status().detail.find("404") != std::string::npos,
                        "失败原因里带上了 yt-dlp 的具体错误（含 404）");
-        registry.check(job.status().failure_reason.find("退出码 1") != std::string::npos,
+        registry.check(job.status().detail.find("exit 1") != std::string::npos,
                        "也带上了退出码");
         registry.check(!job.status().suggestion.empty(), "给出了可执行的建议");
         registry.check(std::filesystem::exists(job.status().staging_dir),
@@ -241,7 +244,7 @@ int main() {
             [&] { return job.status().state != ImportJobState::downloading; },
             [&] { job.pump(); }, 20000);
         registry.check(ended && job.status().state == ImportJobState::failed, "被判为失败");
-        registry.check(job.status().failure_reason.find("403") != std::string::npos,
+        registry.check(job.status().detail.find("403") != std::string::npos,
                        "原因里有 403");
         registry.check(job.status().suggestion.find("拒绝") != std::string::npos,
                        "建议是对的（不是一条无关的提示）");
@@ -681,5 +684,33 @@ int main() {
         }
     }
 
+    {
+        Sandbox box;
+        LoopbackResponse response;
+        response.body = musicboard::test::make_wav_bytes(31000);
+        response.extra_headers = "Content-Type: audio/wav\r\n";
+        LoopbackHttpServer server;
+        registry.check(server.start(response, "/long-track.wav"), "启动长曲本地下载服务器");
+        ImportJobRequest request;
+        request.url = server.url();
+        request.kind = ImportSourceKind::direct_http;
+        request.staging_root = box.staging;
+        request.target_category_dir = box.target;
+        request.prepare_playback = true;
+        ImportJob job;
+        Failure failure;
+        registry.check_invocation([&] { return job.start(request, failure); }, "启动长曲下载与播放准备", failure);
+        const bool ended = wait_until([&] {
+            return job.status().state != ImportJobState::downloading && job.status().state != ImportJobState::preparing;
+        }, [&] { job.pump(); }, 20000);
+        registry.check_eq(ended && job.status().state == ImportJobState::done, "长曲下载与后台准备完成",
+            job.status().failure_reason + job.preparation_failure().to_string());
+        const auto& prepared = job.prepared_audio();
+        registry.check(prepared && !prepared->complete, "长曲采用连续供音，不保留整首 PCM");
+        registry.check(prepared && prepared->head.duration_seconds <= 2.05 && prepared->duration() >= 30.9,
+            "只保留两秒起播段并保留完整时长");
+        registry.check(prepared && prepared->path == job.result().installed_path,
+            "连续供音读取最终离线文件");
+    }
     return registry.finish("import_job_tests");
 }

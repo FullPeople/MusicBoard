@@ -18,6 +18,12 @@ tools = [
      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-shared-9.0.zip",
      "sha256": "95297f42421807938e51fa7fc65f0a63746b5d6147caef448edbbbd8b71800c5", "version": "9.0"},
 ]
+license_files = [
+    {"name": "yt-dlp-UNLICENSE.txt", "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/LICENSE",
+     "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"},
+    {"name": "yt-dlp-THIRD_PARTY_LICENSES.txt", "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/THIRD_PARTY_LICENSES.txt",
+     "sha256": "472aefe951c7db35e1657c1d13fd337140511ed6f2b329205105ad441c5a02b7"},
+]
 for tool in tools:
     path = downloads / tool["name"]
     if not path.exists() or hashlib.file_digest(path.open("rb"), "sha256").hexdigest() != tool["sha256"]:
@@ -45,7 +51,15 @@ for tool in tools:
                 with package.open(member) as source, target.open("wb") as output:
                     shutil.copyfileobj(source, output, 1024 * 1024)
     print("Verified", tool["name"], flush=True)
-(cache / "provenance.json").write_text(json.dumps({"upstream": tools,
+for item in license_files:
+    target = cache / "licenses" / item["name"]
+    target.parent.mkdir(exist_ok=True)
+    if not target.exists() or hashlib.file_digest(target.open("rb"), "sha256").hexdigest() != item["sha256"]:
+        data = urllib.request.urlopen(item["url"], timeout=30).read()
+        if hashlib.sha256(data).hexdigest() != item["sha256"]:
+            raise RuntimeError("License digest mismatch: " + item["name"])
+        target.write_bytes(data)
+(cache / "provenance.json").write_text(json.dumps({"upstream": tools + license_files,
     "files": {str(p.relative_to(cache)).replace("\\", "/"): hashlib.file_digest(p.open("rb"), "sha256").hexdigest()
         for p in cache.rglob("*") if p.is_file() and p.name != "provenance.json"}}, indent=2), encoding="utf-8")
 print("Verified media tools ready:", cache, flush=True)

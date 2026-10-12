@@ -19,7 +19,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z.-]*$')]
-    [string]$Version = '0.3.0',
+    [string]$Version = '0.3.1',
 
     [ValidateSet('Release', 'Debug')]
     [string]$Configuration = 'Release',
@@ -169,7 +169,10 @@ Assert-FileExists (Join-Path $mediaTools 'yt-dlp.exe')
 Assert-FileExists (Join-Path $mediaTools 'ffmpeg.exe')
 Assert-FileExists (Join-Path $mediaTools 'ffprobe.exe')
 Assert-FileExists (Join-Path $mediaTools 'licenses\yt-dlp-UNLICENSE.txt')
+Assert-FileExists (Join-Path $mediaTools 'licenses\yt-dlp-THIRD_PARTY_LICENSES.txt')
 Copy-Item -LiteralPath $mediaTools -Destination (Join-Path $packageDirectory 'media-tools') -Recurse
+Copy-Item -LiteralPath (Join-Path $repositoryRoot 'media-plugins') `
+    -Destination (Join-Path $packageDirectory 'media-tools\plugins') -Recurse
 
 # ---------------------------------------------------------------- version contract
 

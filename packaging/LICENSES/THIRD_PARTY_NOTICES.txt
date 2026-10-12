@@ -37,9 +37,9 @@ Windows platform components
 The executable links only against operating-system components that ship with
 Windows: Direct3D 11, DXGI, DirectComposition, Direct2D, DirectWrite, Windows
 Imaging Component, XAudio2, Media Foundation, WinHTTP, CNG (bcrypt), Shell32,
-Ole32, User32, Gdi32, Kernel32, Dbgihelp and Psapi. No third-party runtime is
-bundled, and no Visual C++ redistributable is required (the C runtime is linked
-statically).
+Ole32, User32, Gdi32, Kernel32, Dbgihelp and Psapi. The main application uses the Windows audio runtime. No Visual C++
+redistributable is required (the C runtime is linked statically). URL imports
+use the separate bundled media tools listed below.
 
 --------------------------------------------------------------------
 No audio content is bundled
@@ -47,3 +47,24 @@ No audio content is bundled
 The installer and the application contain no music or sound effects. You point
 the application at your own library folder; it reads those files and never
 copies or uploads them.
+
+--------------------------------------------------------------------
+Bundled URL import components
+--------------------------------------------------------------------
+yt-dlp 2026.08.19 is distributed unmodified as a separate executable. Its
+license and third-party notices are included in media-tools/licenses.
+Project: https://github.com/yt-dlp/yt-dlp
+
+FFmpeg n9.0.2-27-g7e93014c5b-20261012, GPL shared Windows build by BtbN,
+is run as a separate process for audio conversion. Its GPLv3 text is included
+in media-tools/licenses/LICENSE.txt. Component URLs, versions and file hashes
+are recorded in media-tools/provenance.json. The corresponding source bundle
+must accompany a public release; a link to upstream binaries alone is not a
+substitute for that bundle.
+Project: https://ffmpeg.org/
+Build project: https://github.com/BtbN/FFmpeg-Builds
+
+The FullTools single-track adapters in media-tools/plugins are MusicBoard
+source code under the root LICENSE.txt. They request public playback URLs and
+report provider access refusals. They do not use browser cookies or bypass
+account, region, subscription or DRM requirements.

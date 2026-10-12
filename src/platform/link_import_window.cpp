@@ -85,12 +85,18 @@ bool LinkImportWindow::create_controls(Failure& failure) {
         0, 22, 207, 575, 48, 105);
     start_ = control(0, L"BUTTON", tr(L"下载到曲库", L"Download to library"), BS_DEFPUSHBUTTON | WS_TABSTOP, 367, 279, 138, 31, 106);
     cancel_ = control(0, L"BUTTON", tr(L"取消下载", L"Cancel download"), WS_TABSTOP, 517, 279, 80, 31, 107);
-    if (!font_ || !labels || !url_ || !category_ || !source_ || !autoplay_ || !status_ || !start_ || !cancel_) {
+    details_ = control(0, L"BUTTON", tr(L"查看详情", L"View details"), WS_TABSTOP, 22, 279, 105, 31, 108);
+    if (!font_ || !labels || !url_ || !category_ || !source_ || !autoplay_ || !status_ || !start_ || !cancel_ || !details_) {
         failure.set("ui.link_import", "Control creation Win32=" + std::to_string(GetLastError()));
         return false;
     }
     EnableWindow(cancel_, FALSE);
+    EnableWindow(details_, FALSE);
     return true;
+}
+void LinkImportWindow::set_details(const std::string& text) {
+    detail_text_ = text;
+    if (details_) EnableWindow(details_, !text.empty());
 }
 void LinkImportWindow::set_status(const std::string& text, bool running) {
     if (!window_) return;
@@ -116,13 +122,25 @@ LRESULT CALLBACK LinkImportWindow::window_proc(HWND window, UINT message, WPARAM
 LRESULT LinkImportWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     if (message == WM_CLOSE) { ShowWindow(window_, SW_HIDE); return 0; }
     if (message == WM_COMMAND && HIWORD(wparam) == BN_CLICKED) {
+        if (LOWORD(wparam) == 108 && !detail_text_.empty()) {
+            std::wstring wide;
+            Failure failure;
+            if (utf8_to_wide(detail_text_, wide, failure))
+                MessageBoxW(window_, wide.c_str(), tr(L"下载详情", L"Download details"), MB_OK | MB_ICONINFORMATION);
+            else set_status(failure.context, false);
+            return 0;
+        }
         if (LOWORD(wparam) == 107 && on_cancel) { on_cancel(); return 0; }
         if (LOWORD(wparam) == 106 && on_start) {
             LinkImportInput input{text_of(url_), text_of(category_),
                 SendMessageW(source_, CB_GETCURSEL, 0, 0) == 1,
                 SendMessageW(autoplay_, BM_GETCHECK, 0, 0) == BST_CHECKED};
             Failure failure;
-            if (!on_start(input, failure)) set_status(failure.to_string(), false);
+            set_details({});
+            if (!on_start(input, failure)) {
+                set_details(failure.to_string());
+                set_status(failure.context, false);
+            }
             return 0;
         }
     }

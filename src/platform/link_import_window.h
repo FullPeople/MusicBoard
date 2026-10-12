@@ -16,6 +16,7 @@ public:
     ~LinkImportWindow();
     [[nodiscard]] bool show(HWND owner, Failure& failure);
     void set_status(const std::string& text, bool running);
+    void set_details(const std::string& text);
     std::function<bool(const LinkImportInput&, Failure&)> on_start;
     std::function<void()> on_cancel;
 private:
@@ -30,6 +31,8 @@ private:
     HWND status_ = nullptr;
     HWND start_ = nullptr;
     HWND cancel_ = nullptr;
+    HWND details_ = nullptr;
+    std::string detail_text_;
     HFONT font_ = nullptr;
 };
 }

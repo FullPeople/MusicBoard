@@ -237,7 +237,7 @@ int main() {
 
     {
         const auto suggestion = suggest_yt_dlp_fix("ERROR: Postprocessing: ffmpeg not found");
-        registry.check(suggestion.find("ffmpeg") != std::string::npos, "缺 ffmpeg 给出对应建议");
+        registry.check(suggestion.find("重新安装") != std::string::npos, "缺少转换组件提示重新安装");
     }
     {
         const auto suggestion = suggest_yt_dlp_fix("ERROR: HTTP Error 403: Forbidden");
@@ -255,6 +255,23 @@ int main() {
     }
     registry.check(suggest_yt_dlp_fix("完全看不懂的输出").empty(),
                    "看不懂的输出不给建议（总比给一条错的好）");
+    registry.check(url_is_well_formed("hTtPs://music.163.com/song?id=1"), "混合大小写协议有效");
+    registry.check(normalize_import_url("  hTtPs://music.163.com/SONG?id=AaBb#KeepCase  ") ==
+        "https://music.163.com/SONG?id=AaBb#KeepCase", "规范化协议和粘贴空白，保留路径参数大小写");
+    registry.check(summarize_yt_dlp_failure("The web client only works when logged-in. Use --cookies") ==
+        "此链接需要登录后才能获取音频。", "登录提示不暴露下载器参数");
+    registry.check(summarize_yt_dlp_failure("This video is unavailable") == "此内容已不可用。", "不可用内容有明确说明");
+    registry.check(suggest_yt_dlp_fix("HTTP Error 429: Too Many Requests").find("稍后") != std::string::npos,
+        "限流建议稍后重试");
+    double duration = 0.0;
+    registry.check(parse_yt_dlp_duration_line("MUSICBOARD_SOURCE_DURATION=197.5", duration) && duration == 197.5,
+        "读取来源时长");
+    for (const auto* invalid : {"MUSICBOARD_SOURCE_DURATION=NA", "MUSICBOARD_SOURCE_DURATION=nan",
+            "MUSICBOARD_SOURCE_DURATION=inf", "MUSICBOARD_SOURCE_DURATION=-1", "MUSICBOARD_SOURCE_DURATION=197junk"})
+        registry.check(!parse_yt_dlp_duration_line(invalid, duration), std::string("非法来源时长被拒绝：") + invalid);
+    registry.check(downloaded_audio_is_incomplete(197.5, 30.0), "试听片段被标注为不完整");
+    registry.check(!downloaded_audio_is_incomplete(197.5, 197.2), "编解码微小差异不误报");
+    registry.check(!downloaded_audio_is_incomplete(0.0, 30.0), "未知来源时长不猜测完整性");
 
     return registry.finish("url_classify_tests");
 }

@@ -1,6 +1,8 @@
 #include "library/import_transaction.h"
 
 #include <system_error>
+#include "core/localization.h"
+#include "library/url_classify.h"
 
 #include "audio/decoder.h"
 #include "library/library_ops.h"
@@ -90,6 +92,8 @@ bool import_staged_file(const ImportRequest& request, ImportResult& result, Fail
     // ---- 3. 定名与定址 ----
     std::string stem = request.preferred_stem.empty() ? path_to_utf8(request.staged_file.stem())
                                                       : request.preferred_stem;
+    const bool incomplete = downloaded_audio_is_incomplete(request.source_duration_seconds, staged_duration);
+    if (incomplete) stem += tr(" (试听片段)", " (preview)");
     stem = sanitize_to_valid_name(stem);
     // 净化之后还要过一遍严格校验：净化只保证"能用"，不保证"符合我们的规则"
     if (!validate_file_stem(stem, failure)) {
@@ -165,6 +169,7 @@ bool import_staged_file(const ImportRequest& request, ImportResult& result, Fail
     result.installed_path = target;
     result.final_stem = path_to_utf8(target.stem());
     result.duration_seconds = published_duration;
+    result.content_incomplete = incomplete;
     return true;
 }
 

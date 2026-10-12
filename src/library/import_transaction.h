@@ -38,6 +38,7 @@ struct ImportRequest final {
     std::filesystem::path target_category_dir;
     // 期望的文件名主干（不含扩展名）。为空则沿用暂存文件的主干。
     std::string preferred_stem;
+    double source_duration_seconds = 0.0;
 };
 
 struct ImportResult final {
@@ -47,6 +48,7 @@ struct ImportResult final {
     bool renamed_to_avoid_collision = false;
     // 发布之后重新探测得到的时长（给界面直接显示用）
     double duration_seconds = 0.0;
+    bool content_incomplete = false;
 };
 
 // 执行导入。成功时 result.installed_path 是曲库里的最终位置。
