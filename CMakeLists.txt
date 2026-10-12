@@ -212,6 +212,9 @@ target_link_libraries(scan_library PRIVATE musicboard_audio)
 
 # 阶段 4 的前置探针：这台机器有没有可用的音频输出设备
 add_executable(audio_probe tools/audio_probe.cpp)
+add_executable(import_copy_probe tools/import_copy_probe.cpp)
+musicboard_apply_compiler_options(import_copy_probe)
+target_link_libraries(import_copy_probe PRIVATE musicboard_library)
 musicboard_apply_compiler_options(audio_probe)
 target_link_libraries(audio_probe PRIVATE musicboard_core xaudio2 ole32)
 

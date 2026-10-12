@@ -57,6 +57,7 @@ inline constexpr std::string_view file_not_found = "io.file_not_found";
 inline constexpr std::string_view file_open_failed = "io.file_open_failed";
 inline constexpr std::string_view file_read_failed = "io.file_read_failed";
 inline constexpr std::string_view file_too_large = "io.file_too_large";
+inline constexpr std::string_view cancelled = "io.cancelled";
 inline constexpr std::string_view unsupported_format = "audio.unsupported_format";
 inline constexpr std::string_view decode_failed = "audio.decode_failed";
 inline constexpr std::string_view backend_unavailable = "audio.backend_unavailable";

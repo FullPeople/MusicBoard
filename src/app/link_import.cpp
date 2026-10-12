@@ -63,7 +63,7 @@ void Application::pump_link_import() {
     if (!link_import_active_) return;
     link_import_job_->pump();
     const auto& status = link_import_job_->status();
-    const bool running = status.state == ImportJobState::downloading || status.state == ImportJobState::preparing;
+    const bool running = link_import_job_->is_running();
     std::string message = status.status_text;
     if (running && !status.has_total && status.received_bytes > 0)
         message += " · " + std::to_string(status.received_bytes / 1024) + " KiB";
@@ -81,6 +81,10 @@ void Application::pump_link_import() {
         return;
     }
     const auto& result = link_import_job_->result();
+    if (!result.cleanup_warning.empty()) {
+        report(LogLevel::warning, "link-import-cleanup", result.cleanup_warning);
+        link_import_window_.set_details(result.cleanup_warning);
+    }
     LibraryEntry entry;
     entry.track.name = result.final_stem;
     entry.track.path = result.installed_path;
@@ -110,6 +114,8 @@ void Application::pump_link_import() {
         column.categories.push_back(link_import_input_.category);
     rebuild_visible(column, link_import_input_.as_sfx);
     message = tr("已下载，可离线播放：", "Downloaded for offline playback: ") + result.final_stem;
+    if (!result.cleanup_warning.empty())
+        message += tr("；暂存文件未能清理，可在详情中查看位置。", "; staged files could not be cleaned; see details for their location.");
     if (!slots_failure.empty()) {
         message += tr("；音效按钮准备失败。", "; effect pad preparation failed.");
         link_import_window_.set_details(slots_failure.to_string());

@@ -158,7 +158,7 @@ int main() {
 
         // 启动之后暂存目录必须是空的 —— 下载还没开始写
         const bool saw_progress = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
 
         registry.check_eq(saw_progress, "作业在超时前结束", job.status().failure_reason);
@@ -196,7 +196,7 @@ int main() {
                     observed.push_back(fraction);
                     previous = fraction;
                 }
-                return job.status().state != ImportJobState::downloading;
+                return !job.is_running();
             },
             [&] { job.pump(); }, 20000);
 
@@ -220,7 +220,7 @@ int main() {
         registry.check(job.start(request, failure), "启动失败用例");
 
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended, "失败用例结束了（没有一直等）");
         registry.check(job.status().state == ImportJobState::failed, "状态是 failed");
@@ -241,7 +241,7 @@ int main() {
         ImportJobRequest request = box.request(L"refusal", fake_child);
         registry.check(job.start(request, failure), "启动拒绝用例");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended && job.status().state == ImportJobState::failed, "被判为失败");
         registry.check(job.status().detail.find("403") != std::string::npos,
@@ -260,7 +260,7 @@ int main() {
         ImportJobRequest request = box.request(L"junk", fake_child);
         registry.check(job.start(request, failure), "启动伪装文件用例");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended, "伪装文件用例结束");
         registry.check(job.status().state == ImportJobState::failed,
@@ -282,7 +282,7 @@ int main() {
         ImportJobRequest request = box.request(L"empty", fake_child);
         registry.check(job.start(request, failure), "启动空产出用例");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended && job.status().state == ImportJobState::failed,
                        "报成功却什么都没产出 → 失败");
@@ -296,7 +296,7 @@ int main() {
         ImportJobRequest request = box.request(L"two_files", fake_child);
         registry.check(job.start(request, failure), "启动双产出用例");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended && job.status().state == ImportJobState::failed,
                        "产出两个文件 → 失败（不挑一个，挑一个就是猜）");
@@ -356,7 +356,7 @@ int main() {
         request.stall_timeout_seconds = 0.6;   // silent 模式 30 秒不打一个字
         registry.check(job.start(request, failure), "启动静默用例");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended, "静默用例在超时前收场（没有永远等下去）");
         registry.check(job.status().state == ImportJobState::failed, "状态是 failed");
@@ -401,7 +401,7 @@ int main() {
         request.target_category_dir = box.target;
         registry.check(job.start(request, failure), "连不上的直链也能启动（错误在下的时候才出现）");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 25000);
         registry.check(ended && job.status().state == ImportJobState::failed,
                        "连不上主机 → 失败（而不是永远挂着）");
@@ -451,7 +451,7 @@ int main() {
         registry.check_invocation([&] { return job.start(request, failure); }, "直链作业启动成功", failure);
 
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 25000);
         registry.check_eq(ended, "直链作业在超时前结束", job.status().failure_reason);
         registry.check_eq(job.status().state == ImportJobState::done, "最终状态是 done",
@@ -499,7 +499,7 @@ int main() {
         registry.check(job.start(request, failure), "启动");
 
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 25000);
         registry.check_eq(ended && job.status().state == ImportJobState::done,
                           "无扩展名直链也能导入成功", job.status().failure_reason);
@@ -529,7 +529,7 @@ int main() {
         registry.check(job.start(request, failure), "启动");
 
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 25000);
         registry.check(ended && job.status().state == ImportJobState::failed,
                        "下回来的东西不是音频 → 失败");
@@ -564,7 +564,7 @@ int main() {
         registry.check(job.start(request, failure), "启动");
 
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 25000);
         registry.check(ended && job.status().state == ImportJobState::failed, "404 → 失败");
         registry.check(job.status().failure_reason.find("404") != std::string::npos,
@@ -701,7 +701,7 @@ int main() {
         Failure failure;
         registry.check_invocation([&] { return job.start(request, failure); }, "启动长曲下载与播放准备", failure);
         const bool ended = wait_until([&] {
-            return job.status().state != ImportJobState::downloading && job.status().state != ImportJobState::preparing;
+            return !job.is_running();
         }, [&] { job.pump(); }, 20000);
         registry.check_eq(ended && job.status().state == ImportJobState::done, "长曲下载与后台准备完成",
             job.status().failure_reason + job.preparation_failure().to_string());

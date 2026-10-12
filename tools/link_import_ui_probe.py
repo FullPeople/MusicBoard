@@ -4,6 +4,8 @@ import argparse
 import math
 import array
 import sys
+import tempfile
+import shutil
 import io
 import json
 import os
@@ -23,7 +25,14 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--exe", type=Path, default=root / "build/windows-x64/Release/musicboard.exe")
 parser.add_argument("--autoplay-tone", action="store_true", help="Measure only a generated tone; never retain loopback audio")
 parser.add_argument("--python-modules", type=Path, default=root / "build/qa-python")
+parser.add_argument("--profile-base", type=Path, help="Put the isolated app profile on a chosen volume")
+parser.add_argument("--fixture-megabytes", type=int, default=0, help="Generate 8-128 MiB of silent audio for cross-volume UI checks")
+parser.add_argument("--baseline", action="store_true", help="Record an older app's behavior without asserting the new publication response")
 args = parser.parse_args()
+if args.fixture_megabytes and not 8 <= args.fixture_megabytes <= 128:
+    parser.error("fixture size must be 8-128 MiB")
+if args.fixture_megabytes and args.autoplay_tone:
+    parser.error("large silent fixture and tone output check are separate cases")
 out = root / "build/windows-x64/link-ui-probe" / uuid.uuid4().hex
 out.mkdir(parents=True)
 library = out / "library"
@@ -38,6 +47,8 @@ with wave.open(buffer, "wb") as fixture:
         samples = array.array("h", (int(8000 * math.sin(2 * math.pi * 997 * i / 44100))
                                   for i in range(44100 * 2) for _ in range(2)))
         fixture.writeframes(samples.tobytes())
+    elif args.fixture_megabytes:
+        fixture.writeframes(bytes(args.fixture_megabytes * 1024 * 1024))
     else:
         fixture.writeframes(bytes(44100 * 4 * 2))
 audio = buffer.getvalue()
@@ -66,17 +77,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(audio)))
         self.end_headers()
         try:
-            for offset in range(0, len(audio), 4096):
-                self.wfile.write(audio[offset:offset + 4096])
+            size = 65536 if args.fixture_megabytes else 4096
+            for offset in range(0, len(audio), size):
+                self.wfile.write(audio[offset:offset + size])
                 self.wfile.flush()
-                time.sleep(0.02)
+                time.sleep(0.001 if args.fixture_megabytes else 0.02)
         except (ConnectionError, OSError):
             pass
     def log_message(self, *_):
         pass
 server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
-env = dict(os.environ, LOCALAPPDATA=str(out / "profile"))
+profile = (Path(tempfile.mkdtemp(prefix="musicboard-url-profile-", dir=args.profile_base.resolve(strict=True)))
+           if args.profile_base else out / "profile")
+env = dict(os.environ, LOCALAPPDATA=str(profile))
 process = subprocess.Popen([str(args.exe.resolve(strict=True)), "--library", str(library)],
     env=env, creationflags=subprocess.CREATE_NO_WINDOW)
 checks = {}
@@ -117,15 +131,22 @@ try:
     wait(lambda: not win32gui.IsWindowEnabled(controls[106]))
     checks["DownloadDisablesDuplicateSubmission"] = not win32gui.IsWindowEnabled(controls[101])
     progress = set()
+    responsiveness = []
     began = time.monotonic()
     while not win32gui.IsWindowEnabled(controls[106]) and time.monotonic() - began < 25:
         progress.add(win32gui.GetWindowText(controls[105]))
-        time.sleep(0.04)
+        input_start = time.perf_counter()
+        win32gui.SendMessageTimeout(panel, win32con.WM_NULL, 0, 0, win32con.SMTO_ABORTIFHUNG, 1000)
+        responsiveness.append((time.perf_counter() - input_start) * 1000)
+        time.sleep(0.01 if args.fixture_megabytes else 0.04)
     saved = list((library / "BGM/链接验证").glob("*.wav"))
     checks["DownloadProgressChanges"] = len(progress) > 2
     checks["OfflineFileRetained"] = len(saved) == 1
     checks["OfflineFileExactlyMatchesFixture"] = len(saved) == 1 and hashlib.sha256(saved[0].read_bytes()).digest() == hashlib.sha256(audio).digest()
     checks["CompletedDownloadReenablesControls"] = bool(win32gui.IsWindowEnabled(controls[106]))
+    if args.fixture_megabytes and not args.baseline:
+        checks["InputRespondsDuringDownloadAndPublication"] = bool(responsiveness) and max(responsiveness) < 100
+        checks["PublicationStageObserved"] = any("曲库" in state or "准备播放" in state for state in progress)
     if args.autoplay_tone:
         baseline = max((level for stamp, level in measurements if stamp < began), default=0)
         threshold = max(0.01, baseline * 10)
@@ -144,6 +165,13 @@ try:
     report = {"Passed": all(checks.values()), "Checks": checks,
         "ProgressStates": len(progress), "CancelMilliseconds": round((time.monotonic() - cancel_start) * 1000, 1),
         "TestScope": "Real Windows app; loopback HTTP; isolated library; silent fixture; no public platform claim"}
+    report["EvidenceDirectory"] = str(out)
+    report["ProfileDirectory"] = str(profile)
+    report["FixtureBytes"] = len(audio)
+    report["InputRoundTrips"] = len(responsiveness)
+    report["InputMaximumMilliseconds"] = max(responsiveness, default=0)
+    report["ProgressText"] = sorted(progress)
+    report["Baseline"] = args.baseline
     if args.autoplay_tone:
         report["TestScope"] = "Real Windows app; generated tone via URL import and autoplay; actual WASAPI loopback; spectral amplitudes only"
         report["ToneAmplitudePeak"] = max((level for _, level in measurements), default=0)
@@ -173,3 +201,10 @@ finally:
         capture_stream.close()
     if capture is not None:
         capture.terminate()
+    if args.profile_base:
+        resolved = profile.resolve()
+        if resolved.parent != args.profile_base.resolve(strict=True) or not resolved.name.startswith("musicboard-url-profile-"):
+            raise RuntimeError("Profile cleanup escaped its owned root")
+        if any(path.is_symlink() or path.is_junction() for path in resolved.rglob("*")):
+            raise RuntimeError("Profile cleanup encountered a linked path")
+        shutil.rmtree(resolved)
