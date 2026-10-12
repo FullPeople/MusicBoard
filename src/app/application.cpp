@@ -21,6 +21,7 @@
 #include "library/library_scanner.h"
 #include "library/staging.h"
 #include "platform/dpi.h"
+#include "platform/window_layers.h"
 #include "ui/palette.h"
 
 // shell32 与 ole32 由 CMake 链接（见 CMakeLists 的 musicboard 目标）
@@ -759,6 +760,9 @@ bool Application::handle_message(UINT message, WPARAM wparam, LPARAM lparam, LRE
                 case 11:
                     clear_playback(false, true);
                     break;
+                case 20:
+                    show_link_import();
+                    break;
                 case 1002:
                     product_.hotkeys.enabled = !product_.hotkeys.enabled;
                     save_settings();
@@ -841,6 +845,14 @@ bool Application::handle_message(UINT message, WPARAM wparam, LPARAM lparam, LRE
 // ---------------------------------------------------------------------------
 
 void Application::on_frame() {
+    pump_link_import();
+    const auto layer_now = std::chrono::steady_clock::now();
+    if (layer_now - last_layer_repair_ >= std::chrono::milliseconds(200)) {
+        last_layer_repair_ = layer_now;
+        Failure layer_failure;
+        if (!restore_pinned_window_layers(orb_.handle(), panel_window_handle(), product_.panel.topmost, layer_failure))
+            report(LogLevel::error, "Window layers", layer_failure.to_string());
+    }
     collect_library_load();
     // 动效推进必须走**真实流逝时间**：dt 由两个绝对时刻相减得到，
     // 所以掉帧只是跳一小步，不会让悬停过渡越来越慢（AGENTS.md 第 3 条）。
@@ -2816,6 +2828,10 @@ void Application::on_char(wchar_t character) {
 }
 
 void Application::on_key_down(UINT virtual_key) {
+    if (virtual_key == 'U' && (::GetKeyState(VK_CONTROL) & 0x8000) && capturing_slot_ < 0) {
+        show_link_import();
+        return;
+    }
     if (loading_) { if (virtual_key == VK_ESCAPE) loader_.cancel(); return; }
     if (virtual_key == VK_ESCAPE && (dragging_ || seeking_ || slider_drag_target_ >= 0)) {
         cancel_pointer_gesture();
@@ -3142,7 +3158,8 @@ bool Application::create_tray_menu(HMENU& menu, Failure& failure) {
     const auto bgm = engine_.slot_state(AudioBus::bgm,0);
     const UINT available = !loading_ && bgm.in_use ? MF_STRING : MF_STRING | MF_GRAYED;
     bool ok = add(menu, available, 10, bgm.paused ? tr(L"继续播放", L"Resume") : tr(L"暂停", L"Pause")) &&
-        add(menu, available, 11, tr(L"中止播放", L"Stop playback"));
+        add(menu, available, 11, tr(L"中止播放", L"Stop playback")) &&
+        add(menu, MF_STRING, 20, tr(L"导入音乐链接…  Ctrl+U", L"Import music link…  Ctrl+U"));
     const HMENU recent = ::CreatePopupMenu();
     const HMENU shortcuts = ::CreatePopupMenu();
     if (!recent || !shortcuts) {

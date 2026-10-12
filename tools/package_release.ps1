@@ -19,7 +19,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z.-]*$')]
-    [string]$Version = '0.2.0',
+    [string]$Version = '0.3.0',
 
     [ValidateSet('Release', 'Debug')]
     [string]$Configuration = 'Release',
@@ -161,6 +161,13 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot 'packaging\THIRD_PARTY_NOTICES
     -Destination (Join-Path $packageDirectory 'THIRD_PARTY_NOTICES.txt')
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'packaging\LICENSES\THIRD_PARTY_NOTICES.txt') `
     -Destination (Join-Path $packageDirectory 'LICENSES\THIRD_PARTY_NOTICES.txt')
+
+$mediaTools = Join-Path $repositoryRoot '.cache\media-tools'
+Assert-FileExists (Join-Path $mediaTools 'yt-dlp.exe')
+Assert-FileExists (Join-Path $mediaTools 'ffmpeg.exe')
+Assert-FileExists (Join-Path $mediaTools 'ffprobe.exe')
+Assert-FileExists (Join-Path $mediaTools 'licenses\yt-dlp-UNLICENSE.txt')
+Copy-Item -LiteralPath $mediaTools -Destination (Join-Path $packageDirectory 'media-tools') -Recurse
 
 # ---------------------------------------------------------------- version contract
 

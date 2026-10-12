@@ -97,6 +97,7 @@ bool resolve_yt_dlp(std::filesystem::path& out, Failure& failure) {
     // 便携版最可能的位置：跟本程序放在一起
     const std::string beside = directory_of_current_executable();
     if (!beside.empty()) {
+        candidates.push_back(path_of_utf8(beside) / L"media-tools" / L"yt-dlp.exe");
         candidates.push_back(path_of_utf8(beside) / L"yt-dlp.exe");
     }
     const std::string profile = environment_utf8(L"USERPROFILE");
@@ -260,6 +261,12 @@ bool ImportJob::start(const ImportJobRequest& request, Failure& failure) {
     }
 
     yt_dlp_arguments_ = build_yt_dlp_arguments(request_.url, status_.staging_dir);
+    const std::filesystem::path media_directory = yt_dlp.parent_path();
+    std::error_code media_error;
+    if (std::filesystem::is_regular_file(media_directory / L"ffmpeg.exe", media_error)) {
+        yt_dlp_arguments_.insert(yt_dlp_arguments_.end() - 1, "--ffmpeg-location");
+        yt_dlp_arguments_.insert(yt_dlp_arguments_.end() - 1, path_to_utf8(media_directory));
+    }
 
     ProcessRunOptions run_options;
     run_options.executable = yt_dlp;

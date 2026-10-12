@@ -128,6 +128,8 @@ bool TransparentWindow::create(const Options& options, RenderCallback callback, 
     window_class.lpfnWndProc = &TransparentWindow::window_proc_thunk;
     window_class.hInstance = ::GetModuleHandleW(nullptr);
     window_class.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
+    window_class.hIcon = ::LoadIconW(window_class.hInstance, MAKEINTRESOURCEW(1));
+    window_class.hIconSm = ::LoadIconW(window_class.hInstance, MAKEINTRESOURCEW(1));
     window_class.lpszClassName = class_name;
     // 刻意不设 hbrBackground：窗口内容全部由 DirectComposition 提供，
     // 给背景刷反而会在启动瞬间闪一下白。
@@ -648,6 +650,8 @@ LRESULT TransparentWindow::window_proc(UINT message, WPARAM wparam, LPARAM lpara
 int TransparentWindow::run_message_loop() {
     MSG message{};
     while (::GetMessageW(&message, nullptr, 0, 0) > 0) {
+        const HWND root = ::GetAncestor(message.hwnd, GA_ROOT);
+        if (root && ::GetPropW(root, L"MusicBoard.ModelessDialog") && ::IsDialogMessageW(root, &message)) continue;
         ::TranslateMessage(&message);
         ::DispatchMessageW(&message);
     }

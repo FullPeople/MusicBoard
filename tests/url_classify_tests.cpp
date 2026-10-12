@@ -78,15 +78,24 @@ int main() {
         registry.check(result.platform == "soundcloud", "SoundCloud 认得出");
     }
     {
-        // 明确不支持的平台要给出人话，而不是把它丢给 yt-dlp 再失败
         const auto result = classify_url("https://www.bilibili.com/video/BV1xx411c7mD");
-        registry.check(result.kind == ImportSourceKind::unsupported, "哔哩哔哩被判为不支持");
-        registry.check(result.rejection_reason.find("哔哩哔哩") != std::string::npos,
-                       "拒绝原因里点名了平台");
+        registry.check(result.kind == ImportSourceKind::yt_dlp && result.platform == "bilibili", "哔哩哔哩交给已支持的提取器");
+        registry.check(result.rejection_reason.empty(), "可导入平台没有预先拒绝原因");
     }
     {
         const auto result = classify_url("https://b23.tv/abcdefg");
-        registry.check(result.kind == ImportSourceKind::unsupported, "b23.tv 短链同样被拒");
+        registry.check(result.kind == ImportSourceKind::yt_dlp && result.platform == "bilibili", "b23.tv 短链可以导入");
+    }
+    {
+        registry.check(classify_url("https://y.qq.com/n/ryqq/songDetail/001234").platform == "qqmusic", "QQ 音乐主机识别");
+        registry.check(classify_url("https://m.y.qq.com/portal/song.html?id=123").platform == "qqmusic", "QQ 音乐手机链接识别");
+        registry.check(classify_url("https://www.kugou.com/song/abc.html").platform == "kugou", "酷狗链接识别");
+        registry.check(classify_url("https://www.kuwo.cn/play_detail/123").platform == "kuwo", "酷我链接识别");
+        registry.check(classify_url("https://artist.bandcamp.com/track/example").platform == "bandcamp", "Bandcamp 子域名识别");
+        registry.check(classify_url("https://player.vimeo.com/video/123").platform == "vimeo", "Vimeo 子域名识别");
+        registry.check(classify_url("https://youtube.com.invalid.example/song").platform == "generic", "相似主机名不会冒充平台");
+        registry.check(classify_url("https://example.com/music.163.com/song.mp3").kind == ImportSourceKind::direct_http, "路径中的平台文字不改变直链类型");
+        registry.check(classify_url("https://example.com/page?next=https://www.bilibili.com/video/123").platform == "generic", "查询串中的平台文字不改变来源");
     }
     {
         // 直接指向音频文件 → 自己下就行，不该要求用户装 yt-dlp

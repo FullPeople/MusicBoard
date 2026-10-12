@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(MusicBoard VERSION 0.2.0 LANGUAGES C CXX)
+project(MusicBoard VERSION 0.3.0 LANGUAGES C CXX RC)
+add_compile_definitions(MUSICBOARD_PRODUCT_VERSION="${PROJECT_VERSION}")
 
 if(NOT WIN32)
     message(FATAL_ERROR "音乐板当前只支持 Windows。")
@@ -143,6 +144,8 @@ add_library(musicboard_platform STATIC
     src/platform/transparent_window.cpp
     src/platform/composition_window.cpp
     src/platform/orb_window.cpp
+    src/platform/window_layers.cpp
+    src/platform/link_import_window.cpp
 )
 target_include_directories(musicboard_platform PUBLIC src)
 musicboard_apply_compiler_options(musicboard_platform)
@@ -155,9 +158,12 @@ target_link_libraries(musicboard_platform PRIVATE
 # 可执行
 # ============================================================================
 # 正式程序
+configure_file(packaging/application.rc.in "${CMAKE_CURRENT_BINARY_DIR}/MusicBoard.rc" @ONLY)
 add_executable(musicboard
+    "${CMAKE_CURRENT_BINARY_DIR}/MusicBoard.rc"
     src/app/main.cpp
     src/app/application.cpp
+    src/app/link_import.cpp
     src/app/app_selftest.cpp
     src/app/display_selftest.cpp
     src/app/app_output.cpp
@@ -175,7 +181,7 @@ target_link_libraries(musicboard PRIVATE
 )
 
 # 安装/卸载程序。它自己也在安装包里 —— 卸载器与被装的版本天然一致。
-add_executable(musicboard_setup src/app/setup_main.cpp src/app/app_output.cpp)
+add_executable(musicboard_setup src/app/setup_main.cpp src/app/app_output.cpp "${CMAKE_CURRENT_BINARY_DIR}/MusicBoard.rc")
 musicboard_apply_compiler_options(musicboard_setup)
 # 安装程序同样是 GUI 子系统：双击时不该弹控制台。
 # 它的输出走 app_output（终端里有控制台就打在终端里，否则进日志文件）。
@@ -251,6 +257,7 @@ if(MUSICBOARD_BUILD_TESTS)
     musicboard_add_test(import_transaction_tests musicboard_library)
     musicboard_add_test(library_scanner_tests musicboard_library)
     musicboard_add_test(url_classify_tests musicboard_library)
+    musicboard_add_test(window_layers_tests musicboard_platform)
     musicboard_add_test(http_download_tests musicboard_library)
     musicboard_add_test(cover_art_tests musicboard_library)
     musicboard_add_test(process_runner_tests musicboard_library)

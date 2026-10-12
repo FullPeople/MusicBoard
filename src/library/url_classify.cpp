@@ -28,10 +28,12 @@ namespace {
     return std::string(begin, end);
 }
 
-[[nodiscard]] bool contains_any(std::string_view haystack,
+[[nodiscard]] bool matches_platform_host(std::string_view hostname,
                                 const std::array<std::string_view, 2>& needles) {
     for (const auto& needle : needles) {
-        if (haystack.find(needle) != std::string_view::npos) {
+        if (!needle.empty() && (hostname == needle ||
+            (hostname.size() > needle.size() && hostname.ends_with(needle) &&
+             hostname[hostname.size() - needle.size() - 1] == '.'))) {
             return true;
         }
     }
@@ -77,13 +79,17 @@ struct PlatformEntry final {
     bool supported;
 };
 
-// 顺序有意义：先匹配到的赢。把已知"不支持"的放前面，
-// 免得 bilibili 链接被当成通用链接丢给 yt-dlp 再失败。
-constexpr std::array<PlatformEntry, 5> kPlatforms = {{
-    {"bilibili", "哔哩哔哩", {"bilibili.com", "b23.tv"}, false},
+// 平台按真实主机名匹配。下载器仍会报告登录、地区和内容权限问题。
+constexpr std::array<PlatformEntry, 10> kPlatforms = {{
+    {"bilibili", "哔哩哔哩", {"bilibili.com", "b23.tv"}, true},
     {"youtube", "YouTube", {"youtube.com", "youtu.be"}, true},
     {"netease", "网易云音乐", {"music.163.com", "163cn.tv"}, true},
+    {"qqmusic", "QQ 音乐", {"y.qq.com", "qqmusic.qq.com"}, true},
+    {"kugou", "酷狗音乐", {"kugou.com", "kugou.cn"}, true},
+    {"kuwo", "酷我音乐", {"kuwo.cn", "kuwo.com"}, true},
     {"soundcloud", "SoundCloud", {"soundcloud.com", "soundcloud.app.goo.gl"}, true},
+    {"bandcamp", "Bandcamp", {"bandcamp.com", "bandcamp.app"}, true},
+    {"vimeo", "Vimeo", {"vimeo.com", "vimeopro.com"}, true},
     {"direct", "直接链接", {"", ""}, true},   // 占位，不会靠域名命中
 }};
 
@@ -135,12 +141,20 @@ UrlClassification classify_url(std::string_view url) {
     }
 
     const std::string lower = lowercase_ascii(text);
+    const std::size_t authority_begin = lower.find("://") + 3;
+    const std::size_t authority_end = lower.find_first_of("/?#", authority_begin);
+    std::string_view hostname = std::string_view(lower).substr(
+        authority_begin, authority_end == std::string::npos ? std::string::npos : authority_end - authority_begin);
+    const std::size_t at = hostname.rfind('@');
+    if (at != std::string_view::npos) hostname.remove_prefix(at + 1);
+    if (!hostname.starts_with("[")) hostname = hostname.substr(0, hostname.find(':'));
+    if (hostname.ends_with(".")) hostname.remove_suffix(1);
 
     for (const PlatformEntry& entry : kPlatforms) {
         if (entry.id == "direct") {
             continue;
         }
-        if (!contains_any(lower, entry.domains)) {
+        if (!matches_platform_host(hostname, entry.domains)) {
             continue;
         }
         result.platform = std::string(entry.id);
