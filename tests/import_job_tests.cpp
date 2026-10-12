@@ -712,5 +712,34 @@ int main() {
         registry.check(prepared && prepared->path == job.result().installed_path,
             "连续供音读取最终离线文件");
     }
+    {
+        Sandbox box;
+        LoopbackResponse response;
+        response.body = musicboard::test::make_wav_bytes(31000);
+        LoopbackHttpServer server;
+        registry.check(server.start(response, "/cancel-publication.wav"), "启动入库取消测试服务器");
+        ImportJobRequest request;
+        request.url = server.url();
+        request.kind = ImportSourceKind::direct_http;
+        request.staging_root = box.staging;
+        request.target_category_dir = box.target;
+        request.prepare_playback = true;
+        ImportJob job;
+        Failure failure;
+        registry.check_invocation([&] { return job.start(request, failure); }, "启动后台入库取消用例", failure);
+        const bool reached = wait_until([&] {
+            return job.status().state == ImportJobState::publishing;
+        }, [&] { job.pump(); }, 10000);
+        registry.check(reached, "实际进入后台发布状态");
+        const auto began = GetTickCount64();
+        job.cancel();
+        registry.check(GetTickCount64() - began < 50, "取消请求立即返回，不等待工作线程");
+        const bool ended = wait_until([&] { return !job.is_running(); }, [&] { job.pump(); }, 10000);
+        registry.check(ended, "取消后后台任务完成收尾");
+        const bool unpublished = job.status().state == ImportJobState::cancelled && files_in(box.target).empty();
+        const bool committed = job.status().state == ImportJobState::done &&
+            job.status().playback_preparation_cancelled && std::filesystem::is_regular_file(job.result().installed_path);
+        registry.check(unpublished || committed, "发布前取消不留曲目，已提交时保留有效文件且禁止自动播放");
+    }
     return registry.finish("import_job_tests");
 }
