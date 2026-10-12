@@ -1,0 +1,19 @@
+# 统一按 LF 存与检出。
+#
+# 不只是风格问题：third_party/stb/stb_vorbis.c 的 SHA256 是"按原样拉下来的字节"
+# 算出来的，登记在 third_party/stb/README.md 里。如果 Git 在检出时把 LF 换成 CRLF，
+# 工作区的文件内容就变了，记录的哈希随即失效 —— 那等于把"锁定版本"这件事作废。
+#
+# MSVC 完全能处理 LF 源码，所以统一 LF 没有代价。
+* text=auto eol=lf
+
+# 明确标出二进制，避免 Git 去做行尾转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.lib binary
+*.pdb binary
+*.wav binary
+*.mp3 binary
+*.ogg binary

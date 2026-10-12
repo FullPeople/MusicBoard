@@ -1,0 +1,2143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>音乐板 · 视觉与交互原型</title>
+<style>
+/* =========================================================================
+   设计令牌 (Design Tokens)
+   ========================================================================= */
+:root{
+  /* 底色：深空石墨。面板层比窗口层亮一档，形成"悬浮在桌面上的一块板" */
+  --bg-void:      #0B0C0F;
+  --bg-window:    #14161B;
+  --surface-1:    #1A1D24;
+  --surface-2:    #20242C;
+  --surface-3:    #272C36;
+  --hairline:     #2C313B;
+  --hairline-soft:#23272F;
+
+  --text-1:       #E9EBEF;
+  --text-2:       #9AA0AC;
+  --text-3:       #616874;
+
+  /* 唯一两条色相通道，各自承担语义：琥珀=BGM，青=SFX。
+     它们不是装饰，是"这条音频走哪条总线"的信息编码。 */
+  --bgm:          #F2A03D;
+  --bgm-soft:     rgba(242,160,61,.14);
+  --bgm-glow:     rgba(242,160,61,.38);
+  --sfx:          #3FD0C9;
+  --sfx-soft:     rgba(63,208,201,.14);
+  --sfx-glow:     rgba(63,208,201,.38);
+  --danger:       #E5544B;
+
+  /* 圆角阶梯 */
+  --r-card: 8px;
+  --r-panel: 12px;
+  --r-window: 16px;
+
+  /* 动效：三档时长 + 两条曲线，全局只用这几个 */
+  --ease-out:  cubic-bezier(.22,1,.36,1);
+  --ease-both: cubic-bezier(.65,0,.35,1);
+  --ease-back: cubic-bezier(.34,1.32,.5,1);
+  --t-micro: 120ms;
+  --t-base:  240ms;
+  --t-panel: 420ms;
+
+  --font: "Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--font);
+  background:#07080A;
+  color:var(--text-1);
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:80px;
+}
+button{font-family:inherit;color:inherit;background:none;border:0;cursor:pointer}
+input{font-family:inherit}
+
+/* =========================================================================
+   文本可选范围
+   —— 产品界面默认全部不可选中；只有"曲名"放行。
+      反过来列举"哪些不可选"一定会漏（时间数字、栏目标题、提示小字、按钮、
+      标签、电平表、总线状态……），所以按白名单做。
+   顺带解决一个手感问题：拖拽进度条时不会再误选中旁边的时间数字。
+   注意 .stage 之外的文档与规范区不在此列 —— 那是给人读和复制的。
+   ========================================================================= */
+.stage{user-select:none;-webkit-user-select:none}
+/* 放行：所有承载曲名的地方（用户可能想复制曲名去搜） */
+.deck-name,.track-name,.sfx-name,.sb-txt,.chip-text,
+.hist-btn span,#busBgmTxt,#busSfxTxt{user-select:text;-webkit-user-select:text}
+/* 输入框必须保留可编辑与可选中 */
+.searchbox input{user-select:text;-webkit-user-select:text}
+
+/* =========================================================================
+   文档外框（这是"方案说明页"，不属于产品 UI）
+   ========================================================================= */
+.doc-head{
+  max-width:1400px;margin:0 auto;padding:36px 32px 20px;
+}
+.doc-head h1{font-size:22px;font-weight:600;letter-spacing:.01em}
+.doc-head h1 span{color:var(--bgm)}
+.doc-head p{margin-top:10px;color:var(--text-2);font-size:13.5px;line-height:1.85;max-width:940px}
+.doc-head code{
+  background:var(--surface-1);border:1px solid var(--hairline);
+  padding:1px 6px;border-radius:4px;font-size:12px;color:var(--bgm)
+}
+.doc-bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+.doc-bar button{
+  border:1px solid var(--hairline);background:var(--surface-1);
+  padding:8px 14px;border-radius:99px;font-size:12.5px;color:var(--text-2);
+  transition:all var(--t-micro) var(--ease-out);
+}
+.doc-bar button:hover{background:var(--surface-3);color:var(--text-1);border-color:#39404C}
+.doc-bar button.on{background:var(--bgm-soft);border-color:var(--bgm);color:var(--bgm)}
+
+/* =========================================================================
+   舞台：模拟桌面，用来呈现"透明覆盖层悬浮在真实桌面之上"的观感
+   ========================================================================= */
+.stage-wrap{max-width:1400px;margin:0 auto;padding:0 32px}
+.stage{
+  position:relative;height:900px;border-radius:14px;overflow:hidden;
+  border:1px solid var(--hairline);
+  box-shadow:0 30px 80px rgba(0,0,0,.6);
+}
+.wallpaper{
+  position:absolute;inset:0;
+  background:
+    radial-gradient(900px 620px at 16% 18%, #26314C 0%, transparent 62%),
+    radial-gradient(820px 700px at 84% 26%, #3B2748 0%, transparent 62%),
+    radial-gradient(900px 720px at 52% 96%, #17383A 0%, transparent 60%),
+    linear-gradient(158deg,#0C0F15,#151B24 46%,#0A0D12);
+}
+.wallpaper::after{
+  content:"";position:absolute;inset:0;
+  background-image:radial-gradient(rgba(255,255,255,.055) 1px, transparent 1px);
+  background-size:26px 26px;
+  mask-image:linear-gradient(180deg,#000,transparent 78%);
+  -webkit-mask-image:linear-gradient(180deg,#000,transparent 78%);
+}
+.stage-hint{
+  position:absolute;left:18px;bottom:16px;font-size:11.5px;color:rgba(255,255,255,.3);
+  letter-spacing:.02em;pointer-events:none;z-index:60;
+}
+
+/* =========================================================================
+   形态一：悬浮球
+   —— 收起态就是一枚迷你唱片。有音乐时它自己在转，外圈是 BGM 播放进度环。
+   ========================================================================= */
+.orb-layer{
+  position:absolute;left:0;top:0;inset:0;display:grid;place-items:center;
+  transition:opacity var(--t-panel) var(--ease-out);
+}
+.orb-layer.hidden{opacity:0;pointer-events:none}
+
+.orb{
+  position:relative;width:112px;height:112px;border-radius:50%;
+  display:grid;place-items:center;
+  transition:transform var(--t-base) var(--ease-back);
+}
+.orb:hover{transform:scale(1.06)}
+.orb:active{transform:scale(.97)}
+
+/* 进度环 */
+/* 进度环做细：环带从 14px 收到 3.5px。
+   球本身只有 104px，粗环会喧宾夺主，细环更像"唱片外沿的一圈光"。 */
+.orb-ring{
+  position:absolute;inset:-6px;border-radius:50%;
+  background:conic-gradient(var(--bgm) calc(var(--p,0)*1%), rgba(255,255,255,.13) 0);
+  mask:radial-gradient(circle, transparent 0 53px, #000 54px);
+  -webkit-mask:radial-gradient(circle, transparent 0 53px, #000 54px);
+  transition:background var(--t-base) linear;
+}
+/* 辉光强度由"当前播放位置的波形幅度"驱动 —— 真的跟着音乐的起伏走。
+   真实程序里这个幅度来自解码后的 PCM 包络；原型里来自同一份合成包络。
+   注意这是按实际音频能量来的，不是凭空造一个 BPM。 */
+.orb-ring::after{
+  content:"";position:absolute;inset:0;border-radius:50%;
+  box-shadow:0 0 calc(8px + var(--amp,0) * 28px) var(--bgm-glow);
+  opacity:0;
+  transition:opacity 120ms linear,box-shadow 120ms linear;
+}
+.orb.is-playing .orb-ring::after{opacity:calc(.3 + var(--amp,0) * .7)}
+
+/* 球体本体：一枚黑胶 */
+.orb-body{
+  position:relative;width:104px;height:104px;border-radius:50%;
+  background:radial-gradient(circle at 50% 42%, #24272E 0%, #101216 58%, #0A0B0E 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.14),
+    inset 0 0 0 1px rgba(255,255,255,.05),
+    0 16px 34px rgba(0,0,0,.62),
+    0 4px 10px rgba(0,0,0,.5);
+  display:grid;place-items:center;
+  overflow:hidden;
+  transition:transform 120ms linear;
+}
+.orb.is-playing .orb-body{transform:scale(calc(1 + var(--amp,0) * .028))}
+.orb-grooves{
+  position:absolute;inset:9%;border-radius:50%;
+  background:
+    repeating-radial-gradient(circle at 50% 50%, rgba(255,255,255,.062) 0 .6px, transparent .6px 3.4px),
+    repeating-radial-gradient(circle at 50% 50%, rgba(255,255,255,.03) 0 .5px, transparent .5px 7.1px);
+  mask:radial-gradient(circle, transparent 0 32%, #000 33%);
+  -webkit-mask:radial-gradient(circle, transparent 0 32%, #000 33%);
+}
+/* 球内的图案（无封面时是沟槽、有封面时是封面本身）跟着播放旋转，转速与主体唱片一致。
+   暂停用 animation-play-state 停住而不是摘类 —— 摘类会把角度弹回 0。
+   中心的 logo 不转：它是标记，不是盘面。 */
+.orb.is-playing .orb-grooves,
+.orb.is-playing .orb-art{animation:spin 6.5s linear infinite}
+.orb.paused .orb-grooves,
+.orb.paused .orb-art{animation-play-state:paused}
+/* 中心不再镂空一个黑色轴孔 —— 那在 104px 的球上读起来像破了个洞。
+   改成居中的 logo 标记；有封面时 logo 让位，整球直接显示印刷封面。 */
+.orb-label{
+  position:relative;width:38%;height:38%;border-radius:50%;z-index:2;
+  background:linear-gradient(150deg,var(--bgm),#B96A18);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.34), 0 2px 8px rgba(0,0,0,.5);
+  display:grid;place-items:center;
+}
+.orb-label svg{width:17px;height:17px;fill:rgba(0,0,0,.62)}
+.orb-art{
+  position:absolute;inset:0;border-radius:50%;display:none;z-index:1;
+  background-size:cover;background-position:center;
+}
+.orb-art::after{
+  content:"";position:absolute;inset:0;border-radius:50%;
+  background:radial-gradient(circle at 50% 50%, transparent 52%, rgba(0,0,0,.42) 100%),
+             radial-gradient(circle at 34% 26%, rgba(255,255,255,.14), transparent 48%);
+}
+.orb.has-art .orb-art{display:block}
+.orb.has-art .orb-label{display:none}
+.orb.has-art .orb-grooves{opacity:0}
+.orb-tip{
+  position:absolute;left:50%;transform:translateX(-50%);bottom:-40px;white-space:nowrap;
+  font-size:12px;color:var(--text-2);opacity:0;transition:opacity var(--t-base) var(--ease-out);
+  pointer-events:none;
+}
+.orb:hover .orb-tip{opacity:1}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* =========================================================================
+   形态二：主面板
+   ========================================================================= */
+.panel-layer{
+  position:absolute;inset:0;display:grid;place-items:center;
+  opacity:0;pointer-events:none;
+}
+.panel-layer.show{opacity:1;pointer-events:auto}
+
+.panel{
+  width:1256px;height:788px;
+  border-radius:var(--r-window);
+  background:linear-gradient(180deg,#181B21 0%, #131519 100%);
+  border:1px solid #30363F;
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,.5),
+    0 40px 90px rgba(0,0,0,.72),
+    0 12px 30px rgba(0,0,0,.55),
+    inset 0 1px 0 rgba(255,255,255,.06);
+  display:flex;flex-direction:column;overflow:hidden;
+  transform-origin:var(--ox,50%) var(--oy,50%);
+  transform:scale(.93) translateY(10px);
+  transition:transform var(--t-panel) var(--ease-out);
+}
+.panel-layer.show .panel{transform:scale(1) translateY(0)}
+
+/* ---- 自绘标题栏（无系统边框窗口） ---- */
+.titlebar{
+  height:42px;flex:none;display:flex;align-items:center;justify-content:space-between;
+  padding:0 10px 0 14px;border-bottom:1px solid var(--hairline-soft);
+  background:linear-gradient(180deg,rgba(255,255,255,.032),transparent);
+  cursor:grab;user-select:none;
+}
+.tb-left{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.tb-glyph{
+  flex:none;width:16px;height:16px;border-radius:50%;
+  background:conic-gradient(from 0deg,var(--bgm),#7A4308,var(--bgm));
+  box-shadow:0 0 10px var(--bgm-glow);
+}
+.tb-title{flex:none;white-space:nowrap;font-size:13.5px;font-weight:600;letter-spacing:.03em}
+/* 状态芯片：左组可伸缩 + 芯片吃满剩余宽度。
+   标题栏 1256px 宽，左组约 200px、右侧按钮组约 120px，
+   芯片实际可用约 900px —— 长曲名绝大多数在这就能整条放下。 */
+.tb-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  height:22px;padding:0 10px;border-radius:99px;min-width:0;
+  background:var(--surface-1);border:1px solid var(--hairline);
+  font-size:11.5px;color:var(--text-2);flex:0 1 auto;
+}
+.chip-dot{width:6px;height:6px;border-radius:50%;background:var(--text-3);flex:none;transition:background var(--t-base)}
+.tb-chip.live{border-color:rgba(242,160,61,.45);background:var(--bgm-soft);color:#F2C089}
+.tb-chip.live .chip-dot{background:var(--bgm);box-shadow:0 0 8px var(--bgm-glow);animation:pulse 2s var(--ease-both) infinite}
+.chip-text{overflow:hidden;min-width:0;white-space:nowrap}
+.chip-text > span{display:inline-block;white-space:nowrap}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.34}}
+
+/* 单行文本的最后一道兜底：字号缩到下限仍放不下时，
+   悬停让整串文字横向走一遍。只有真正溢出才挂上，
+   否则短曲名也会跟着晃。多行文本不走这条路（见 fitText）。 */
+.mq{overflow:hidden;min-width:0}
+.mq > span{display:inline-block;white-space:nowrap}
+.mq.mq-on:hover > span{animation:mqslide var(--mq-dur,3.2s) linear infinite alternate}
+/* 溢出的单行文本右侧渐隐：text-overflow 在包裹 inline-block 的元素上不生效，
+   直接硬切读者看不出"后面还有"。渐隐 + 悬停跑马灯才是完整交代。 */
+.mq.mq-on{
+  mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 16px),transparent 100%);
+  -webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 16px),transparent 100%);
+}
+@keyframes mqslide{from{transform:translateX(0)}to{transform:translateX(var(--mq-shift,0px))}}
+
+.tb-right{display:flex;align-items:center;gap:2px;flex:none}
+.tb-btn{
+  width:30px;height:28px;border-radius:6px;display:grid;place-items:center;
+  color:var(--text-2);transition:all var(--t-micro) var(--ease-out);
+}
+.tb-btn:hover{background:var(--surface-3);color:var(--text-1)}
+.tb-btn.tb-close:hover{background:var(--danger);color:#fff}
+.tb-btn.on{color:var(--bgm)}
+.tb-btn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.7}
+.tb-sep{width:1px;height:16px;background:var(--hairline);margin:0 6px}
+
+/* ---- 主体两列 ---- */
+.body{flex:1;display:flex;min-height:0}
+.col{display:flex;flex-direction:column;min-height:0;padding:14px 16px 16px}
+.col-bgm{flex:1.46;border-right:1px solid var(--hairline-soft)}
+.col-sfx{flex:1;background:linear-gradient(180deg,rgba(63,208,201,.022),transparent 40%)}
+
+/* 强调色定义在"整列"这一层，而不是各组件上。
+   唱片、进度条、标签、芯片、选中卡片、电平表全部从 --accent 取色，
+   整列的语义色因此只有一个来源，不会出现某处忘了定义就退回灰色的情况。 */
+.col-bgm{--accent:var(--bgm);--accent-soft:var(--bgm-soft);--accent-glow:var(--bgm-glow);--accent-deep:#8A4E0F}
+.col-sfx{--accent:var(--sfx);--accent-soft:var(--sfx-soft);--accent-glow:var(--sfx-glow);--accent-deep:#146B68}
+
+.col-head{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex:none}
+.col-title{font-size:12.5px;font-weight:600;letter-spacing:.1em;color:var(--accent)}
+.col-title em{font-style:normal;font-size:10px;letter-spacing:.14em;opacity:.55;margin-left:5px}
+
+/* 音量 */
+.vol{display:flex;align-items:center;gap:9px;margin-left:auto}
+.vol svg{width:14px;height:14px;fill:var(--text-3);flex:none}
+.slider{
+  position:relative;width:104px;height:20px;display:flex;align-items:center;cursor:pointer;
+}
+.sl-track{position:absolute;left:0;right:0;height:4px;border-radius:99px;background:var(--surface-3);overflow:hidden}
+.sl-fill{height:100%;width:100%;background:var(--accent);border-radius:99px;transition:width var(--t-micro) linear}
+.sl-knob{
+  position:absolute;top:50%;width:11px;height:11px;border-radius:50%;background:#F2F3F5;
+  transform:translate(-50%,-50%);left:100%;box-shadow:0 1px 4px rgba(0,0,0,.6);
+  transition:width var(--t-micro) var(--ease-out),height var(--t-micro) var(--ease-out),left var(--t-micro) linear;
+}
+.slider:hover .sl-knob{width:14px;height:14px}
+.vol-val{font-size:11.5px;color:var(--text-2);width:36px;text-align:right;font-variant-numeric:tabular-nums}
+
+/* 电平表：让"两条总线各自独立"可见 */
+.meter{display:flex;align-items:flex-end;gap:2px;height:15px}
+.meter i{width:3px;border-radius:2px;background:var(--accent);opacity:.22;height:30%;transition:height 90ms linear,opacity 90ms linear}
+.meter.on i{opacity:.92}
+
+/* ---- 唱片台 ---- */
+.deck{
+  position:relative;border-radius:var(--r-panel);
+  background:linear-gradient(180deg,var(--surface-1),#161920);
+  border:1px solid var(--hairline);
+  transition:border-color var(--t-base) var(--ease-out),box-shadow var(--t-base) var(--ease-out),transform var(--t-base) var(--ease-out);
+}
+.deck-bgm{padding:16px 18px;flex:none}
+.deck.drop{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 34px var(--accent-glow)}
+
+/* 落点光圈 */
+/* 落点光圈挂在 deck-stage 上而不是整块 deck 上：
+   圆心必须落在唱片中心，否则"会放到哪"这件事就指不准。
+   光圈比唱盘略大一圈并压在唱片之下，只露出一道外环。 */
+.dropring{
+  position:absolute;left:50%;top:50%;width:180px;height:180px;margin:-90px 0 0 -90px;
+  border-radius:50%;border:1.5px dashed var(--accent);opacity:0;pointer-events:none;
+  transform:scale(.86);transition:all var(--t-base) var(--ease-out);
+}
+.deck.drop .dropring{opacity:.85;transform:scale(1);animation:breathe 1.3s var(--ease-both) infinite}
+@keyframes breathe{0%,100%{transform:scale(.97);opacity:.55}50%{transform:scale(1.03);opacity:.95}}
+
+/* 唱片在左，曲目信息与控制在右 —— 这样整块 deck 只有 224px 高，
+   省下来的高度全部让给曲库列表 */
+.deck-main{display:flex;gap:24px;align-items:flex-start}
+.deck-stage{position:relative;width:160px;height:160px;flex:none;display:grid;place-items:center}
+/* 唱盘：唱片是搁在盘上的，盘沿与唱片之间那道空隙就是唱针的停放位。
+   没有这圈盘，唱针离沟槽只有 5px 余量，"停着"和"在放"就分不出来。 */
+.deck-stage::before{
+  content:"";position:absolute;width:156px;height:156px;border-radius:50%;
+  background:radial-gradient(circle at 50% 38%,#1E2128,#0F1115 74%);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),inset 0 2px 10px rgba(0,0,0,.6),0 10px 26px rgba(0,0,0,.45);
+}
+.deck-sfx .deck-stage::before{width:70px;height:70px}
+.mx .deck-stage::before{width:118px;height:118px}
+
+/* 唱片 */
+.vinyl{
+  position:relative;width:140px;height:140px;border-radius:50%;
+  background:radial-gradient(circle at 50% 46%, #23262D 0%, #101216 56%, #08090B 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.055),
+    inset 0 1px 0 rgba(255,255,255,.1),
+    0 14px 32px rgba(0,0,0,.6),
+    0 3px 8px rgba(0,0,0,.5);
+  display:grid;place-items:center;
+}
+.vinyl::before{ /* 沟槽：只在无封面时可见 */
+  content:"";position:absolute;inset:5%;border-radius:50%;
+  background:
+    repeating-radial-gradient(circle at 50% 50%, rgba(255,255,255,.058) 0 .6px, transparent .6px 3.2px),
+    repeating-radial-gradient(circle at 50% 50%, rgba(255,255,255,.026) 0 .5px, transparent .5px 6.9px);
+  mask:radial-gradient(circle, transparent 0 30%, #000 31%);
+  -webkit-mask:radial-gradient(circle, transparent 0 30%, #000 31%);
+}
+.vinyl::after{ /* 高光扫过 */
+  content:"";position:absolute;inset:0;border-radius:50%;z-index:3;pointer-events:none;
+  background:conic-gradient(from 210deg, transparent 0deg, rgba(255,255,255,.075) 42deg, transparent 96deg,
+                            transparent 200deg, rgba(255,255,255,.045) 244deg, transparent 300deg);
+}
+.vinyl.has-art::before{opacity:0}
+.vinyl.has-art::after{
+  background:conic-gradient(from 200deg, transparent 0deg, rgba(255,255,255,.14) 38deg, transparent 88deg,
+                            transparent 186deg, rgba(255,255,255,.085) 232deg, transparent 292deg);
+}
+/* 转速降到 6.5s/圈：3.4s 在 140px 的盘上晃眼。
+   暂停用 animation-play-state 而不是摘掉类 —— 摘掉类会把角度重置回 0，
+   盘会"啪"地弹回原位。暂停必须停在当前角度上。 */
+.vinyl.spin{animation:spin 6.5s linear infinite}
+.vinyl.spin.paused{animation-play-state:paused}
+/* 点击唱片即暂停 / 继续，不再用按钮。悬停给一圈强调色环作为唯一提示 —— 不加文字。
+   注意 .clickable：没有曲目可操作时既不换光标也不给环，否则鼠标划过空盘会亮，
+   让人以为点了会有反应。 */
+.vinyl.clickable{cursor:pointer}
+.vinyl.clickable:hover{
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.055),
+    inset 0 1px 0 rgba(255,255,255,.1),
+    0 0 0 2px var(--accent), 0 0 22px var(--accent-glow),
+    0 14px 32px rgba(0,0,0,.6), 0 3px 8px rgba(0,0,0,.5);
+}
+
+/* 盘上不写任何字。曲名交给右侧信息列 —— 直径 140px 的圆放不下长曲名，
+   而且唱片上写字本来就只是把"读不到"藏起来。
+   有封面时整盘就是封面（像光盘），无封面时是黑胶 + 中心一个总线色圆点：
+   灰=空闲，琥珀/青=在放。状态由颜色表达，不由文字表达。 */
+.vinyl{overflow:hidden}
+.vinyl-art{
+  position:absolute;inset:0;border-radius:50%;display:none;z-index:1;
+  background-size:cover;background-position:center;
+}
+.vinyl.has-art .vinyl-art{display:block}
+.vinyl-art::after{
+  content:"";position:absolute;inset:0;border-radius:50%;
+  background:
+    radial-gradient(circle at 50% 50%, transparent 50%, rgba(0,0,0,.46) 100%),
+    radial-gradient(circle at 34% 26%, rgba(255,255,255,.14), transparent 48%);
+}
+.vinyl-core{
+  position:absolute;width:30%;height:30%;border-radius:50%;z-index:2;
+  background:linear-gradient(148deg,var(--accent),var(--accent-deep));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.32),0 2px 10px rgba(0,0,0,.5);
+  transition:background var(--t-base) var(--ease-out);
+}
+.vinyl.idle .vinyl-core{background:linear-gradient(148deg,#3A3F49,#22262D)}
+.vinyl.has-art .vinyl-core{display:none}
+/* 唱片中心镂空成真正的轴孔：黑胶/CD 的中心本来就是透的，
+   颜色取唱盘的暗度，读起来是"透过去看到唱盘"而不是"贴了个黑点"。
+   （悬浮球那边相反 —— 球心放 logo，不镂空。） */
+.vinyl-hole{
+  position:absolute;left:50%;top:50%;width:9.5%;height:9.5%;margin:-4.75% 0 0 -4.75%;
+  border-radius:50%;z-index:4;pointer-events:none;
+  background:radial-gradient(circle at 50% 45%,#0D0F13,#08090C);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.10);
+}
+/* 已暂停：停转 + 唱针抬起 + 整体压暗 + 中心圆转灰。
+   没有传输按钮之后，用户必须能一眼看出"再点一下会继续"还是"什么都没加载"。 */
+.vinyl.paused{opacity:.68}
+.vinyl.paused .vinyl-core{background:linear-gradient(148deg,#5A6170,#2C313B)}
+
+/* 唱针：支点在唱片右上外侧，空闲时垂在盘外，播放时向内旋到外圈沟槽上。
+   转动方向是算过的——轴心在上方、臂朝下，CSS 正角度把末端往左摆，
+   所以"停放"是负角度、"落针"是正角度，两者都不能让针尖压到盘心。 */
+.tonearm{position:absolute;top:10px;right:19px;width:10px;height:88px;
+  transform-origin:50% 0;z-index:4;transform:rotate(-12deg);
+  transition:transform 900ms var(--ease-out)}
+.deck.playing .tonearm{transform:rotate(12deg)}
+.tonearm::before{ /* 臂杆 */
+  content:"";position:absolute;left:50%;top:0;width:2.5px;height:79px;margin-left:-1.25px;border-radius:2px;
+  background:linear-gradient(90deg,#8E939C,#D6DAE1 40%,#6E737C);
+  box-shadow:0 1px 3px rgba(0,0,0,.6);
+}
+.tonearm::after{ /* 唱头 */
+  content:"";position:absolute;left:50%;top:76px;width:11px;height:12px;margin-left:-5.5px;
+  border-radius:2px 2px 3px 3px;
+  background:linear-gradient(180deg,#B9BEC7,#71767F);
+  box-shadow:0 2px 5px rgba(0,0,0,.65);
+}
+.tonearm-base{
+  position:absolute;left:50%;top:0;width:14px;height:14px;margin-left:-7px;margin-top:-7px;border-radius:50%;
+  background:radial-gradient(circle at 38% 34%,#9BA1AA,#4A4F57);
+  box-shadow:0 2px 6px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.3);
+}
+
+/* 曲目信息。min-height 与唱片等高（160），整块 deck 因此只有 192px 高，
+   比原来省下 66px —— 这些高度全部还给下面的曲库列表。
+
+   曲名用"固定两行框 + 逐档缩字号"，由 fitText() 计算字号。
+   绝不加省略号：省略号正是这条需求要取消的东西。 */
+.deck-info{flex:1;min-width:0;min-height:160px;display:flex;flex-direction:column;padding-top:4px}
+/* 基准字号必须写在 CSS 里：复位时空闲占位符要回落到 18px，
+   否则会继承 body 的 16px。fitText 运行时再覆盖它。 */
+.deck-name{font-size:18px;font-weight:600;letter-spacing:.01em;overflow-wrap:anywhere}
+.deck-line{display:flex;align-items:center;gap:6px;margin-top:11px;flex-wrap:wrap}
+.deck-line-sep{width:1px;height:16px;background:var(--hairline);margin:0 3px;flex:none}
+.tag{
+  height:21px;padding:0 9px;border-radius:5px;display:inline-flex;align-items:center;
+  background:var(--surface-2);border:1px solid var(--hairline);
+  font-size:10.5px;color:var(--text-2);letter-spacing:.04em;
+}
+.tag.accent{background:var(--accent-soft);border-color:rgba(242,160,61,.4);color:var(--accent)}
+.col-sfx .tag.accent{border-color:rgba(63,208,201,.4)}
+
+/* 右列靠一个 auto 间距把"曲目信息"与"操作区"上下分开：
+   上面是这首曲子是什么，下面是能对它做什么。 */
+.opt{
+  height:26px;padding:0 10px;border-radius:6px;font-size:11.5px;flex:none;
+  background:var(--surface-1);border:1px solid var(--hairline);color:var(--text-3);
+  display:inline-flex;align-items:center;gap:6px;
+  transition:all var(--t-micro) var(--ease-out);
+}
+.opt::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.4;flex:none}
+.opt:hover{color:var(--text-2);border-color:#3A414D}
+.opt.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.opt.on::before{opacity:1;box-shadow:0 0 7px var(--accent-glow)}
+.opt-hint{font-size:11px;color:var(--text-3);margin-left:auto;white-space:nowrap}
+
+/* 进度条改成低高度音波图：每根竖条是一个时间片，播过的着色、未播的压暗。
+   高度只用 20px，比原先的细条更耐看，也更像"这是一段音频"。 */
+.progress{margin-top:auto;flex:none;display:flex;align-items:center;gap:9px;padding-top:2px}
+/* 音波图是 SVG 画的连续包络（上下对称、相邻采样相关），不是一排矩形。
+   已播 / 未播用两条同形状的路径叠加，靠 clip-path 露出已播部分。 */
+.wave{
+  flex:1;min-width:0;height:26px;cursor:pointer;position:relative;
+  display:flex;align-items:center;
+}
+.wave svg{display:block;width:100%;height:100%}
+.wave .wv-base{fill:#2F3540;transition:fill var(--t-micro) linear}
+/* 已播部分靠"遮罩"显示：clip-path 的 inline 值由 setWaveProgress 写入。
+   这里绝不能再写一条 clip-path 规则 —— CSS 属性优先级高于 SVG 表现属性，
+   写在这里会把运行时设的值盖掉（之前就是这么让已播部分整条消失的）。 */
+.wave .wv-play{fill:var(--accent)}
+.wave.pending .wv-base{fill:var(--surface-2)}
+.wave.pending .wv-play{fill:var(--surface-2)}
+.wave.mini .wv-play{display:none}
+.wave.mini .wv-base{fill:var(--text-3);opacity:.45}
+.wave.mini.sb-on .wv-base{fill:var(--accent);opacity:.9}
+.pg-time{flex:none;width:32px;font-size:10.5px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.pg-time.right{text-align:right}
+
+/* 传输控制 */
+.transport{display:flex;align-items:center;gap:8px;margin-top:10px}
+.tbtn{
+  width:36px;height:36px;border-radius:9px;display:grid;place-items:center;
+  background:var(--surface-2);border:1px solid var(--hairline);color:var(--text-2);
+  transition:all var(--t-micro) var(--ease-out);
+}
+.tbtn:hover{background:var(--surface-3);color:var(--text-1);transform:translateY(-1px)}
+.tbtn:disabled{opacity:.34;cursor:not-allowed;transform:none}
+.tbtn svg{width:14px;height:14px;fill:currentColor}
+.tbtn-primary{
+  width:46px;height:46px;border-radius:50%;
+  background:linear-gradient(160deg,var(--bgm),#B96A18);border-color:transparent;color:#1A1004;
+  box-shadow:0 6px 18px rgba(242,160,61,.3);
+}
+.tbtn-primary:hover{transform:translateY(-2px);box-shadow:0 9px 24px rgba(242,160,61,.42)}
+.tbtn-primary svg{width:17px;height:17px}
+.hist{display:flex;gap:6px;flex:1;min-width:0}          /* 左侧按钮已移除，按钮铺满整行 */
+.hist-btn{
+  height:36px;padding:0 12px;border-radius:9px;display:flex;align-items:center;gap:6px;
+  background:var(--surface-2);border:1px solid var(--hairline);font-size:11.5px;color:var(--text-2);
+  flex:1;min-width:0;justify-content:center;transition:all var(--t-micro) var(--ease-out);
+}
+.hist-btn span{overflow:hidden;white-space:nowrap;min-width:0}   /* 溢出交给 .mq.mq-on 的渐隐 + 跑马灯 */
+.hist-btn:hover:not(:disabled){background:var(--surface-3);color:var(--text-1)}
+.hist-btn:disabled{opacity:.3;cursor:not-allowed}
+
+/* ---- SFX 四台 ---- */
+.deck-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;flex:none}
+/* 音效台排版：h{ v{ h{ v{功能按钮}, 唱片 }, 音波图 }, 音量条 }
+   最外层横向 = [左侧内容块][竖向音量条]；
+   内容块纵向 = [功能按钮列 + 唱片] 一行，下面接音波图。 */
+.deck-sfx{padding:10px 9px 10px 10px;display:flex;gap:9px;align-items:stretch}
+.sfx-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}
+.sfx-top{display:flex;gap:9px;align-items:center;min-width:0}
+.sfx-funcs{display:flex;flex-direction:column;gap:5px;flex:none}
+/* 左侧竖排功能按钮：默认循环开、淡入淡出关 */
+.fbtn{
+  width:38px;height:24px;border-radius:6px;font-size:10px;letter-spacing:.02em;
+  display:grid;place-items:center;
+  background:var(--surface-1);border:1px solid var(--hairline);color:var(--text-3);
+  transition:all var(--t-micro) var(--ease-out);
+}
+.fbtn:hover{color:var(--text-2);border-color:#3A414D}
+.fbtn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+/* 最右侧竖向音量条 */
+.vsl{flex:none;width:15px;display:flex;flex-direction:column;align-items:center;gap:5px}
+.vsl-ico{flex:none;width:10px;height:10px;fill:var(--text-3)}
+.vsl-rail{position:relative;flex:1;width:15px;cursor:pointer}
+.vsl-rail::before{
+  content:"";position:absolute;top:0;bottom:0;left:50%;width:5px;margin-left:-2.5px;
+  border-radius:99px;background:var(--surface-3);
+}
+.vsl-fill{
+  position:absolute;left:50%;bottom:0;width:5px;margin-left:-2.5px;height:100%;
+  border-radius:99px;background:var(--accent);
+}
+.vsl-fill::after{
+  content:"";position:absolute;left:50%;top:0;width:15px;height:7px;margin-left:-7.5px;margin-top:-3.5px;
+  border-radius:99px;background:#F2F3F5;box-shadow:0 1px 3px rgba(0,0,0,.65);
+  transition:width var(--t-micro) var(--ease-out),height var(--t-micro) var(--ease-out);
+}
+.vsl:hover .vsl-fill::after{width:17px;height:8px;margin-left:-8.5px;margin-top:-4px}
+.deck-sfx .deck-stage{width:76px;height:76px}
+.deck-sfx .vinyl{width:62px;height:62px}
+.deck-sfx .tonearm{width:8px;height:56px;top:3px;right:9px;transform:rotate(-12deg)}
+.deck-sfx .tonearm::before{height:48px;width:2px;margin-left:-1px}
+.deck-sfx .tonearm::after{top:45px;width:9px;height:10px;margin-left:-4.5px}
+.deck-sfx .tonearm-base{width:11px;height:11px;margin-left:-5.5px;margin-top:-5.5px}
+
+.deck-sfx.playing .tonearm{transform:rotate(12deg)}
+.deck-sfx .dropring{width:90px;height:90px;margin:-45px 0 0 -45px}
+
+/* 音效台的名字只有约 100px 宽（唱片右侧的剩余宽度）。
+   把一首 428 秒的 BGM 拖过来时，83 字的名字会被撑成 9 行、把整块台子拉高，
+   两排台子高度就不齐了。所以这里定死两行 + 省略号；
+   完整名字靠悬停这块台子、在上方的预览区里看。 */
+.sfx-name{
+  flex:1;min-width:0;font-size:11px;line-height:1.4;color:var(--text-2);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;height:31px;overflow-wrap:anywhere;
+}
+.sfx-name.live{color:var(--sfx);font-weight:600}
+.sfx-foot{display:flex;align-items:center;justify-content:space-between;width:100%}
+/* 必须 flex:none —— .wave 基础的 flex:1 在纵向 flex 容器里是 flex-basis:0，
+   而父容器高度由内容撑开、没有可分配空间，于是它被压成 0 高（音波图"消失"的原因）。 */
+.deck-sfx .wave{flex:none;height:18px}
+
+/* ---- 曲库 ---- */
+.library{flex:1;display:flex;flex-direction:column;min-height:0;margin-top:12px}
+
+.lib-head{display:flex;flex-direction:column;gap:9px;flex:none;margin-bottom:10px}
+/* 搜索框与悬停预览是同一个 box：左边输入框（任何时刻都能用），
+   右边用一条竖线分隔出悬停信息区。
+   于是"不悬停时搜索照常可用"是结构上保证的 —— 两者本来就在同一个盒子里，
+   谁也不覆盖谁，不需要 z-index 或 pointer-events 去补。 */
+.searchbox{
+  display:flex;align-items:center;height:46px;flex:none;
+  padding-right:12px;border-radius:var(--r-card);
+  background:var(--surface-1);border:1px solid var(--hairline);
+  transition:border-color var(--t-base) var(--ease-out),background var(--t-base) var(--ease-out);
+}
+.searchbox:focus-within{border-color:var(--accent)}
+.searchbox.active{border-color:var(--accent);background:var(--accent-soft)}
+.sb-ico{flex:none;width:13px;height:13px;margin:0 8px 0 11px;stroke:var(--text-3);fill:none;stroke-width:1.8}
+.searchbox input{
+  flex:none;width:172px;height:100%;background:none;border:0;outline:none;
+  color:var(--text-1);font-size:12.5px;
+}
+.searchbox input::placeholder{color:var(--text-3)}
+.sb-peek{
+  flex:1;min-width:0;height:100%;display:flex;align-items:center;gap:10px;
+  border-left:1px solid var(--hairline);margin-left:12px;padding-left:12px;
+}
+.sb-wave{flex:none;width:118px;height:22px;cursor:default}
+/* 完整曲名允许两行，不截断 */
+/* 预览区只剩"名字 + 波形"两块（tag/时长/格式已按你的要求去掉），
+   名字因此可以吃满剩余宽度。 */
+.sb-txt{flex:1;min-width:0;font-size:12px;line-height:1.4;color:var(--text-3);overflow-wrap:anywhere}
+.searchbox.active .sb-txt{color:var(--text-1)}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{
+  flex:none;height:26px;padding:0 11px;border-radius:99px;font-size:11.5px;
+  background:var(--surface-1);border:1px solid var(--hairline);color:var(--text-2);
+  transition:all var(--t-micro) var(--ease-out);white-space:nowrap;
+}
+.chip:hover{color:var(--text-1);border-color:#3A414D}
+.chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+
+.grid{
+  flex:1;overflow-y:auto;display:grid;gap:7px;align-content:start;
+  grid-template-columns:repeat(auto-fill,minmax(158px,1fr));
+  padding:3px 4px 12px 3px;
+  scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent;
+}
+.grid::-webkit-scrollbar{width:8px}
+.grid::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:99px}
+.grid::-webkit-scrollbar-track{background:transparent}
+
+.track{
+  position:relative;display:flex;align-items:center;gap:9px;min-width:0;
+  padding:8px 9px;border-radius:var(--r-card);cursor:grab;
+  background:var(--surface-1);border:1px solid var(--hairline);
+  transition:all var(--t-micro) var(--ease-out);
+}
+.track:hover{background:var(--surface-2);border-color:#3A414D;transform:translateY(-1px);
+  box-shadow:0 6px 14px rgba(0,0,0,.4)}
+.track:active{cursor:grabbing}
+.track.sel{background:var(--accent-soft);border-color:var(--accent)}
+.track.playing{border-color:var(--accent);background:var(--accent-soft)}
+.track-badge{
+  width:30px;height:30px;border-radius:6px;flex:none;display:grid;place-items:center;
+  background:var(--surface-3);font-size:8.5px;font-weight:700;color:var(--text-2);letter-spacing:.02em;
+}
+.track.playing .track-badge{background:var(--accent);color:#141414}
+.track-txt{min-width:0;flex:1;overflow:hidden}
+/* 卡片里的名字回到单行省略号：卡片宽度固定，长名放不下。
+   完整曲名改由搜索栏下方的悬停预览条承担（见 .peek）。 */
+/* 必须 display:block —— .track-name 原本是 inline 的 span，
+   而 overflow / text-overflow / white-space:nowrap 三者在 inline 盒上都不生效，
+   结果长曲名直接顶出卡片、把整行撑到屏幕外。 */
+.track-name{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.track-meta{font-size:10px;color:var(--text-3);margin-top:2px;font-variant-numeric:tabular-nums}
+.track-grip{opacity:0;flex:none;transition:opacity var(--t-micro) var(--ease-out)}
+.track:hover .track-grip{opacity:.55}
+.track-grip svg{width:11px;height:11px;fill:var(--text-2)}
+/* 正在播放时的小均衡器 */
+.track-eq{display:none;gap:2px;align-items:flex-end;height:12px;flex:none}
+.track.playing .track-eq{display:flex}
+.track.playing .track-grip{display:none}
+.track-eq i{width:2px;background:var(--accent);border-radius:2px;animation:eq 700ms var(--ease-both) infinite}
+.track-eq i:nth-child(1){height:40%;animation-delay:0ms}
+.track-eq i:nth-child(2){height:90%;animation-delay:130ms}
+.track-eq i:nth-child(3){height:60%;animation-delay:260ms}
+@keyframes eq{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+
+/* 拖拽幽灵 */
+#ghost{
+  position:fixed;left:-9999px;top:-9999px;display:flex;align-items:center;gap:9px;
+  padding:9px 13px;border-radius:9px;background:#1E222A;max-width:300px;
+  border:1px solid var(--bgm);box-shadow:0 14px 34px rgba(0,0,0,.72);
+  font-size:12px;color:var(--text-1);pointer-events:none;
+}
+#ghost .g-dot{width:7px;height:7px;border-radius:50%;background:var(--bgm);flex:none}
+#ghostName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+#ghost.sfx{border-color:var(--sfx)} #ghost.sfx .g-dot{background:var(--sfx)}
+
+/* ---- 总线状态条 ---- */
+.busbar{
+  flex:none;height:34px;display:flex;align-items:center;gap:18px;
+  padding:0 18px;border-top:1px solid var(--hairline-soft);
+  background:rgba(0,0,0,.22);font-size:11px;color:var(--text-3);
+}
+.bus{display:flex;align-items:center;gap:7px}
+.bus .dot{width:6px;height:6px;border-radius:50%;background:var(--text-3);transition:all var(--t-base) var(--ease-out)}
+.bus.live .dot{background:var(--bus);box-shadow:0 0 9px var(--bus)}
+.bus .k{color:var(--text-2)}
+.busbar .sep{flex:1}
+.busbar .path{font-size:10.5px;color:var(--text-3);opacity:.75}
+
+/* =========================================================================
+   设计规范区
+   ========================================================================= */
+.spec{max-width:1400px;margin:64px auto 0;padding:0 32px}
+.spec h2{font-size:16px;font-weight:600;margin-bottom:6px;padding-bottom:10px;border-bottom:1px solid var(--hairline)}
+.spec h2:not(:first-child){margin-top:52px}
+.spec .lead{font-size:13px;color:var(--text-2);line-height:1.85;margin-top:14px;max-width:940px}
+.spec-grid{display:grid;gap:14px;margin-top:18px}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g2{grid-template-columns:repeat(2,1fr)}
+.card{background:var(--surface-1);border:1px solid var(--hairline);border-radius:var(--r-panel);padding:16px 18px}
+.card h3{font-size:12.5px;font-weight:600;color:var(--text-1);margin-bottom:12px;letter-spacing:.02em}
+.card p{font-size:12px;color:var(--text-2);line-height:1.8}
+
+.sw-row{display:flex;align-items:center;gap:11px;padding:7px 0;border-bottom:1px solid var(--hairline-soft)}
+.sw-row:last-child{border-bottom:0}
+.sw{width:26px;height:26px;border-radius:7px;flex:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
+.sw-code{font-size:11px;color:var(--text-2);font-variant-numeric:tabular-nums;flex:1}
+.sw-use{font-size:10.5px;color:var(--text-3);text-align:right}
+
+table{width:100%;border-collapse:collapse;margin-top:14px;font-size:12px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--hairline-soft);vertical-align:top}
+th{color:var(--text-3);font-weight:600;font-size:11px;letter-spacing:.05em}
+td{color:var(--text-2);line-height:1.7}
+td b{color:var(--text-1);font-weight:600}
+td code{background:var(--bg-void);border:1px solid var(--hairline);padding:1px 5px;border-radius:4px;font-size:11px;color:var(--bgm)}
+
+/* 状态矩阵里的迷你唱片预览 */
+.matrix{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:18px}
+.mx{background:var(--surface-1);border:1px solid var(--hairline);border-radius:var(--r-panel);padding:16px;text-align:center}
+.mx .deck-stage{width:120px;height:120px;margin:0 auto}
+.mx .vinyl{width:106px;height:106px}
+.mx .tonearm{width:11px;height:78px;top:8px;right:16px}
+.mx .tonearm::before{height:70px;width:2.5px;margin-left:-1.25px}
+.mx .tonearm::after{top:66px;width:10px;height:13px;margin-left:-5px}
+.mx .tonearm-base{width:16px;height:16px;margin-left:-8px;margin-top:-8px}
+.mx h4{font-size:12px;margin-top:14px;color:var(--text-1);font-weight:600}
+.mx p{font-size:11px;color:var(--text-3);margin-top:5px;line-height:1.65}
+</style>
+</head>
+<body>
+
+<div class="doc-head">
+  <h1>音乐板 · <span>视觉与交互原型</span></h1>
+  <p>
+    这是重写前的样式方案，不是最终程序。它的作用是把<strong>"悬浮球 ↔ 主面板"两态、唱片台的读法、拖拽播放的手感、BGM 与 SFX 的独立性</strong>
+    变成你能直接看到和点到的东西，先把观感定下来，再落 C++。
+    下面舞台区是<strong>模拟桌面</strong>，用来呈现透明覆盖层浮在真实桌面之上的样子；舞台内的所有控件都是可交互的。
+    <br>演示提示：<code>点悬浮球展开</code> · <code>把曲目卡片拖到唱片上</code> · <code>点卡片选中 / 双击直接播放</code> · <code>拖进度条跳转</code>（播放速度为便于观察做了 4× 压缩）。<br>交互提示：<code>点唱片本体 = 暂停 / 继续</code> · <code>点音效唱片 = 停止</code> · <code>悬停曲目或上一首 / 下一首 = 预览条显示完整曲名 + 音波图</code>
+  </p>
+  <div class="doc-bar">
+    <button id="btnModeOrb">悬浮球态</button>
+    <button id="btnModePanel" class="on">面板态</button>
+    <button id="btnDemoBg">演示：播放音乐</button>
+    <button id="btnDemoSfx">演示：触发音效</button>
+    <button id="btnDemoDrag">演示：拖拽落点</button>
+    <button id="btnReset">重置</button>
+  </div>
+</div>
+
+<section class="stage-wrap">
+  <div class="stage" id="stage">
+    <div class="wallpaper"></div>
+    <div class="stage-hint">模拟桌面 —— 实际程序中此区域是真实桌面，窗口为透明覆盖层</div>
+
+    <!-- ===== 形态一：悬浮球 ===== -->
+    <div class="orb-layer hidden" id="orbLayer">
+      <div style="position:relative">
+        <button class="orb" id="orb" title="点击展开音乐板">
+          <div class="orb-ring" id="orbRing"></div>
+          <div class="orb-body">
+            <div class="orb-grooves"></div>
+            <div class="orb-art" id="orbArt"></div>
+            <div class="orb-label">
+              <svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3z"/></svg>
+            </div>
+          </div>
+        </button>
+        <div class="orb-tip">左键展开 · 右键菜单 · 拖动移动</div>
+      </div>
+    </div>
+
+    <!-- ===== 形态二：主面板 ===== -->
+    <div class="panel-layer show" id="panelLayer">
+      <div class="panel" id="panel">
+
+        <!-- 自绘标题栏 -->
+        <div class="titlebar" id="titlebar">
+          <div class="tb-left">
+            <span class="tb-glyph"></span>
+            <span class="tb-title">音乐板</span>
+            <span class="tb-chip" id="tbChip">
+              <span class="chip-dot"></span><span class="chip-text mq" id="tbChipText" title="空闲"><span id="tbChipLabel">空闲</span></span>
+            </span>
+          </div>
+          <div class="tb-right">
+            <button class="tb-btn on" id="btnPin" title="窗口置顶">
+              <svg viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 4H6l4-4z"/><path d="M12 13v8"/></svg>
+            </button>
+            <span class="tb-sep"></span>
+            <button class="tb-btn" id="btnCollapse" title="收起到悬浮球">
+              <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+            </button>
+            <button class="tb-btn tb-close" id="btnClose" title="退出">
+              <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- 主体 -->
+        <div class="body">
+
+          <!-- ============ BGM 列 ============ -->
+          <div class="col col-bgm">
+            <div class="col-head">
+              <span class="col-title">音乐 <em>BGM</em></span>
+              <div class="vol">
+                <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/></svg>
+                <div class="slider" data-bus="bgm" id="slBgm">
+                  <div class="sl-track"><div class="sl-fill"></div></div><div class="sl-knob"></div>
+                </div>
+                <span class="vol-val" id="valBgm">100%</span>
+                <div class="meter" id="meterBgm"><i></i><i></i><i></i><i></i><i></i></div>
+              </div>
+            </div>
+
+            <!-- BGM 唱片台 -->
+            <div class="deck deck-bgm" id="deckBgm" data-bus="bgm">
+              <div class="deck-main">
+                <div class="deck-stage">
+                  <div class="dropring"></div>
+                  <div class="vinyl idle" id="vinylBgm">
+                    <div class="vinyl-art" id="artBgm"></div>
+                    <div class="vinyl-core"></div>
+                    <div class="vinyl-hole"></div>
+                  </div>
+                  <div class="tonearm" id="armBgm"><div class="tonearm-base"></div></div>
+                </div>
+                <div class="deck-info">
+                  <div class="deck-name" id="bgmName">-- 空闲 --</div>
+                  <div class="deck-line">
+                    <span class="tag" id="bgmCat">未选择</span>
+                    <span class="tag" id="bgmFmt">—</span>
+                    <span class="deck-line-sep"></span>
+                    <button class="opt on" id="optLoop">循环</button>
+                    <button class="opt on" id="optFade">淡入淡出</button>
+                    <button class="opt" id="optRestart">从头播放</button>
+                  </div>
+
+                  <div class="progress">
+                    <span class="pg-time" id="pgElapsed">00:00</span>
+                    <div class="wave" id="waveBgm" title="点击或拖动跳转"></div>
+                    <span class="pg-time right" id="pgTotal">00:00</span>
+                  </div>
+
+                  <div class="transport">
+                    <div class="hist">
+                      <button class="hist-btn" id="histPrev" disabled>
+                        <svg viewBox="0 0 24 24" style="width:10px;fill:currentColor"><path d="M15 5l-7 7 7 7z"/></svg><span class="mq" id="histPrevText"><span>—</span></span>
+                      </button>
+                      <button class="hist-btn" id="histNext" disabled>
+                        <span class="mq" id="histNextText"><span>—</span></span><svg viewBox="0 0 24 24" style="width:10px;fill:currentColor"><path d="M9 5l7 7-7 7z"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 音乐库 -->
+            <div class="library">
+              <div class="lib-head">
+                <div class="searchbox" id="searchBoxBgm">
+                  <svg class="sb-ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                  <input id="searchBgm" placeholder="搜索音乐…">
+                  <div class="sb-peek" id="peekBgm">
+                    <div class="sb-txt" id="peekTxtBgm">悬停曲目卡查看完整曲名</div>
+                    <div class="wave mini sb-wave" id="peekWaveBgm"></div>
+                  </div>
+                </div>
+                <div class="chips" id="chipsBgm"></div>
+              </div>
+              <div class="grid" id="gridBgm"></div>
+            </div>
+          </div>
+
+          <!-- ============ SFX 列 ============ -->
+          <div class="col col-sfx">
+            <div class="col-head">
+              <span class="col-title">音效 <em>SFX</em></span>
+              <div class="vol">
+                <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 8.5a4.5 4.5 0 010 7" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+                <div class="slider" data-bus="sfx" id="slSfx">
+                  <div class="sl-track"><div class="sl-fill"></div></div><div class="sl-knob"></div>
+                </div>
+                <span class="vol-val" id="valSfx">100%</span>
+                <div class="meter" id="meterSfx"><i></i><i></i><i></i><i></i><i></i></div>
+              </div>
+            </div>
+
+            <!-- 四个 SFX 唱片台 -->
+            <div class="deck-grid" id="sfxDecks"></div>
+
+            <!-- 音效库 -->
+            <div class="library">
+              <div class="lib-head">
+                <div class="searchbox" id="searchBoxSfx">
+                  <svg class="sb-ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                  <input id="searchSfx" placeholder="搜索音效…">
+                  <div class="sb-peek" id="peekSfx">
+                    <div class="sb-txt" id="peekTxtSfx">悬停音效卡查看完整名称</div>
+                    <div class="wave mini sb-wave" id="peekWaveSfx"></div>
+                  </div>
+                </div>
+                <div class="chips" id="chipsSfx"></div>
+              </div>
+              <div class="grid" id="gridSfx"></div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 总线状态条 -->
+        <div class="busbar">
+          <div class="bus" id="busBgm" style="--bus:var(--bgm)">
+            <span class="dot"></span><span class="k">BGM 总线</span><span id="busBgmTxt">空闲</span>
+          </div>
+          <div class="bus" id="busSfx" style="--bus:var(--sfx)">
+            <span class="dot"></span><span class="k">SFX 总线</span><span id="busSfxTxt">空闲</span>
+          </div>
+          <span class="sep"></span>
+          <span class="path" id="busPath">曲库：D:\Music\DnD</span>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<div id="ghost"><span class="g-dot"></span><span id="ghostName">曲目</span></div>
+
+<!-- =========================================================================
+     设计规范
+     ========================================================================= -->
+<section class="spec">
+
+  <h2>1 · 形态与窗口</h2>
+  <p class="lead">
+    产品只有两个形态，不设第三态。<b>悬浮球</b>是常驻形态——一枚会转的迷你黑胶，外圈 conic 进度环就是当前 BGM 的播放进度，
+    不占桌面也不用展开就能读到状态；<b>主面板</b>是工作形态，从球的位置为原点缩放展开（<code>transform-origin</code> 指向球心），
+    收拢时反向缩回球心，所以动效方向感是"从球里长出来"而不是"窗口跳出来"。
+  </p>
+  <div class="spec-grid g3">
+    <div class="card">
+      <h3>窗口技术</h3>
+      <p>Win32 分层窗口（<code>WS_EX_LAYERED</code> + <code>UpdateLayeredWindow</code>）承载悬浮球，支持真正的逐像素透明与鼠标穿透；
+      主面板用 DirectComposition 合成，D2D 绘制。两个窗口共享同一个 D3D11 设备，不各自建一套。</p>
+    </div>
+    <div class="card">
+      <h3>边框与拖拽</h3>
+      <p>无系统边框。标题栏自绘，整个栏身是拖动热区（<code>WM_NCHITTEST</code> 返回 <code>HTCAPTION</code>），
+      右侧三个按钮返回 <code>HTCLIENT</code>。这样既保留系统级的拖动/双击最大化手感，又完全掌控外观。</p>
+    </div>
+    <div class="card">
+      <h3>DPI</h3>
+      <p>Per-Monitor V2 感知。<code>GetDpiForWindow</code> 取当前显示器 DPI，所有逻辑像素经
+      <code>MulDiv(v, dpi, 96)</code> 换算；D2D render target 的 DPI 固定 96 并做运行时校验，保证"布局跟着缩放、绘制不被二次缩放"。</p>
+    </div>
+  </div>
+
+  <h2>2 · 色彩：两条色相 = 两条总线</h2>
+  <p class="lead">
+    整套界面只有<b>一个中性灰阶家族 + 两条强调色相</b>。琥珀只用于 BGM，青只用于 SFX——它们不是装饰，
+    而是"这条音频走哪条总线"的信息编码。所以你扫一眼唱片的外圈色就知道它归谁，不必读文字。
+    其余一切（按钮、卡片、分隔）都保持中性，把彩色额度全部留给音频状态。
+  </p>
+  <div class="spec-grid g2">
+    <div class="card">
+      <h3>中性灰阶（结构）</h3>
+      <div class="sw-row"><span class="sw" style="background:#0B0C0F"></span><span class="sw-code">--bg-void  #0B0C0F</span><span class="sw-use">窗口外、凹陷</span></div>
+      <div class="sw-row"><span class="sw" style="background:#14161B"></span><span class="sw-code">--bg-window #14161B</span><span class="sw-use">面板底</span></div>
+      <div class="sw-row"><span class="sw" style="background:#1A1D24"></span><span class="sw-code">--surface-1 #1A1D24</span><span class="sw-use">卡片</span></div>
+      <div class="sw-row"><span class="sw" style="background:#272C36"></span><span class="sw-code">--surface-3 #272C36</span><span class="sw-use">悬停 / 轨道</span></div>
+      <div class="sw-row"><span class="sw" style="background:#2C313B"></span><span class="sw-code">--hairline  #2C313B</span><span class="sw-use">1px 描边</span></div>
+    </div>
+    <div class="card">
+      <h3>语义色（状态）</h3>
+      <div class="sw-row"><span class="sw" style="background:#F2A03D"></span><span class="sw-code">--bgm   #F2A03D</span><span class="sw-use">BGM 一切</span></div>
+      <div class="sw-row"><span class="sw" style="background:#3FD0C9"></span><span class="sw-code">--sfx   #3FD0C9</span><span class="sw-use">SFX 一切</span></div>
+      <div class="sw-row"><span class="sw" style="background:#E9EBEF"></span><span class="sw-code">--text-1 #E9EBEF</span><span class="sw-use">曲名 / 主文本</span></div>
+      <div class="sw-row"><span class="sw" style="background:#9AA0AC"></span><span class="sw-code">--text-2 #9AA0AC</span><span class="sw-use">次要信息</span></div>
+      <div class="sw-row"><span class="sw" style="background:#E5544B"></span><span class="sw-code">--danger #E5544B</span><span class="sw-use">仅删除 / 关闭悬停</span></div>
+    </div>
+  </div>
+
+  <h2>3 · 动效：只有三档时长、两条曲线</h2>
+  <p class="lead">
+    动效克制是"看起来专业"的主要来源。全局只有三个时长和两条曲线，不允许各组件各自发明节奏；
+    唯一一个"弹"的曲线只留给悬浮球，用来强调它是整个产品的入口。
+  </p>
+  <table>
+    <thead><tr><th style="width:150px">场景</th><th style="width:130px">时长 / 曲线</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><b>悬停反馈</b></td><td>120ms · ease-out</td><td>卡片抬升 1px、按钮变亮、进度条旋钮放大。必须无感地快。</td></tr>
+      <tr><td><b>拖拽落点</b></td><td>240ms · ease-out</td><td>虚线光圈从 0.86 缩放到 1 并开始 1.3s 呼吸；唱片描边转为该总线的强调色 + 外发光。</td></tr>
+      <tr><td><b>展开 / 收拢</b></td><td>420ms · ease-out</td><td>面板以球心为原点 0.93→1 缩放并上移 10px 淡入；球同步缩到 0.6 淡出。<b>两段同时进行</b>，读起来是一个动作。</td></tr>
+      <tr><td><b>唱针落下</b></td><td>900ms · ease-out</td><td>从停放角 <code>+16°</code> 转到落针角 <code>-9°</code>。这是全屏最慢的一处动效，因为它就是"放唱片"这个动作本身，要让人看见。</td></tr>
+      <tr><td><b>唱片旋转</b></td><td>3.4s / 圈 · linear</td><td>真黑胶 33⅓ rpm 是 1.8s/圈，肉眼过快；3.4s 既保留"在转"的读感又不晃眼。SFX 短音效不转，改为外圈进度扫过。</td></tr>
+      <tr><td><b>悬浮球强调</b></td><td>240ms · ease-back</td><td>悬停放大到 1.06。全局唯一使用回弹曲线的元素。</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4 · 唱片台的状态矩阵</h2>
+  <p class="lead">
+    唱片台是产品的核心控件，它必须能<b>只用视觉</b>表达五件事：有没有曲目、是否在播、是否被拖拽指向、音效是否在响、以及它归哪条总线。
+    下面四种状态是照着"扫一眼就懂"设计的。
+  </p>
+  <div class="matrix">
+    <div class="mx">
+      <div class="deck-stage">
+        <div class="vinyl idle"><div class="vinyl-core"></div><div class="vinyl-hole"></div></div>
+        <div class="tonearm" style="transform:rotate(-12deg)"><div class="tonearm-base"></div></div>
+      </div>
+      <h4>空闲</h4>
+      <p>唱针停在盘外、唱片静止、中心圆是灰的。不转就是没在播 —— 不需要指示灯，也不需要盘上写字。</p>
+    </div>
+    <div class="mx">
+      <div class="deck-stage deck playing">
+        <div class="vinyl spin"><div class="vinyl-core"></div><div class="vinyl-hole"></div></div>
+        <div class="tonearm" style="transform:rotate(12deg)"><div class="tonearm-base"></div></div>
+      </div>
+      <h4>播放中</h4>
+      <p>唱片旋转、唱针落盘、中心圆变成该总线的强调色。有封面时整盘直接就是封面（像光盘的印刷面）。</p>
+    </div>
+    <div class="mx">
+      <div class="deck-stage">
+        <div class="vinyl idle paused"><div class="vinyl-core"></div><div class="vinyl-hole"></div></div>
+        <div class="tonearm" style="transform:rotate(-12deg)"><div class="tonearm-base"></div></div>
+      </div>
+      <h4>已暂停（点唱片）</h4>
+      <p>暂停与继续都靠点唱片本体：停转、抬针、整体压暗、中心圆转灰。没有按钮，也没有文字提示 —— <b>压暗这一档必须和"空闲"分得开</b>，否则用户不知道再点一下会不会继续。</p>
+    </div>
+    <div class="mx">
+      <div class="deck-stage" style="--accent:var(--sfx);--accent-glow:var(--sfx-glow)">
+        <div style="position:absolute;width:120px;height:120px;border-radius:50%;border:1.5px dashed var(--sfx);opacity:.9;animation:breathe 1.3s var(--ease-both) infinite"></div>
+        <div class="vinyl" style="--accent:var(--sfx);--accent-deep:#146B68"><div class="vinyl-core"></div><div class="vinyl-hole"></div></div>
+        <div class="tonearm" style="transform:rotate(-12deg)"><div class="tonearm-base"></div></div>
+      </div>
+      <h4>被拖拽指向</h4>
+      <p>虚线呼吸光圈 + 该总线色描边。落点用颜色自报总线（琥珀 = BGM、青 = SFX），松手前就知道会放到哪。音效触发是瞬态的，改用音波图从左到右扫过一遍来表达，而不是让唱片转起来。</p>
+    </div>
+  </div>
+
+  <h2>5 · 交互清单</h2>
+  <table>
+    <thead><tr><th style="width:170px">操作</th><th style="width:230px">结果</th><th>为什么这样定</th></tr></thead>
+    <tbody>
+      <tr><td><b>拖曲目 → 唱片</b></td><td>落到该台播放；BGM 走交叉淡入淡出，SFX 立即起声</td><td>主路径。拖动过程中落点有呼吸光圈，松手前就能确认会放到哪。</td></tr>
+      <tr><td><b>双击曲目</b></td><td>BGM 库的进主台；SFX 库的进第一个空闲台</td><td>不想拖时的快捷路径。SFX 台满则替换最早触发的那一台。</td></tr>
+      <tr><td><b>单击曲目</b></td><td>仅选中（高亮），不播放</td><td>避免"想看看是什么、结果响了"这种事故。跑团现场最怕误触发。</td></tr>
+      <tr><td><b>点击唱片本体</b></td><td>BGM：暂停 / 继续；音效：停止</td><td>取消全部传输按钮。状态由唱片自己表达（转 / 停转、抬针、中心圆灰或彩），悬停给一圈强调色环作唯一提示，不加文字。暂停态必须和空闲态在视觉上分得开。</td></tr>
+      <tr><td><b>悬停曲目卡</b></td><td>搜索栏下方的预览条显示完整曲名 + 音波图</td><td>卡片宽度固定，长曲名必然要省略号；完整信息由一个固定位置的预览条承担。它是独立一行、不覆盖输入框，所以不悬停时搜索照常可用。</td></tr>
+      <tr><td><b>悬停上一首 / 下一首</b></td><td>同上，显示那一首的完整曲名 + 音波图</td><td>按钮本身放不下长名，预览条是它唯一的完整出口。</td></tr>
+      <tr><td><b>拖音波图</b></td><td>跳转，松手前不打断声音</td><td>拖动中只更新 UI（音波图即时着色），<code>WM_LBUTTONUP</code> 才真正 seek，避免连续 seek 造成爆音。</td></tr>
+      <tr><td><b>竖向音量条（每台）</b></td><td>只改这一台的音量</td><td>滚轮悬停在音量条上也调它，不必精确拖动。</td></tr>
+      <tr><td><b>右键曲目</b></td><td>重命名 / 删除 / 移动到分类</td><td>重命名与删除必须二次确认；文件名非法字符在输入时就拒绝并给出原因。</td></tr>
+      <tr><td><b>右键悬浮球</b></td><td>显示/隐藏面板 · 置顶开关 · 退出</td><td>球上不做左键菜单，左键永远是"展开"，一个按钮只做一件事。</td></tr>
+      <tr><td><b>拖标题栏</b></td><td>移动窗口；双击切换最大化</td><td>走 <code>HTCAPTION</code>，保留系统手感与窗口吸附。</td></tr>
+      <tr><td><b>滚轮</b></td><td>曲库滚动；在音量条上则调音量</td><td>悬停位置决定语义，减少一次精确点击。</td></tr>
+      <tr><td><b>左侧竖排开关（音效台）</b></td><td>循环 / 淡入淡出，每台独立</td><td>默认循环开、淡入淡出关。音效台不放"从头播放" —— 对零点几秒的音效没有意义。</td></tr>
+    </tbody>
+  </table>
+
+  <h2>6 · 待你定的三件事</h2>
+  <div class="spec-grid g3">
+    <div class="card">
+      <h3>A · 悬浮球是主入口还是可选？</h3>
+      <p>方案里球是常驻形态。若你希望"打开就是面板"，球可以退化成标题栏上的一个收起按钮，面板成为默认形态。</p>
+    </div>
+    <div class="card">
+      <h3>B · 音效台固定 4 个还是可增删？</h3>
+      <p>原型按 4 个固定台做（对应你原版）。若跑到 6/8 台，右列会改成一个可分页的 2×3 网格。</p>
+    </div>
+    <div class="card">
+      <h3>C · 是否需要键盘热键</h3>
+      <p>跑团现场用数字键瞬时触发音效是刚需。这需要在无焦点时也能收到按键（<code>RegisterHotKey</code> 或低级键盘钩子），是可加但会引入权限与冲突议题的一项。</p>
+    </div>
+  </div>
+
+</section>
+
+<script>
+(function(){
+"use strict";
+
+/* =====================================================================
+   演示数据（真实程序来自扫描用户选择的曲库目录）
+   ===================================================================== */
+const BGM_LIB = [
+  {cat:"城镇",  name:"酒馆的夜晚",        fmt:"OGG", dur:214, art:true},
+  {cat:"城镇",  name:"节日集市",          fmt:"OGG", dur:188, art:false},
+  {cat:"战斗",  name:"低阶战斗",          fmt:"OGG", dur:246, art:true},
+  {cat:"战斗",  name:"最终首领",          fmt:"MP3", dur:301, art:true},
+  {cat:"战斗",  name:"史诗之战",          fmt:"OGG", dur:332, art:false},
+  {cat:"探索",  name:"幽暗地下世界",      fmt:"OGG", dur:275, art:true},
+  {cat:"探索",  name:"失落神殿废墟",      fmt:"OGG", dur:229, art:false},
+  {cat:"探索",  name:"迷雾森林",          fmt:"WAV", dur:167, art:true},
+  {cat:"情绪",  name:"悲剧背叛",          fmt:"OGG", dur:198, art:false},
+  {cat:"情绪",  name:"希望 城镇",         fmt:"WAV", dur:143, art:true},
+  {cat:"情绪",  name:"告别",              fmt:"OGG", dur:176, art:false},
+  {cat:"环境",  name:"雨声",              fmt:"OGG", dur:600, art:true},
+  {cat:"环境",  name:"篝火",              fmt:"OGG", dur:540, art:false},
+  {cat:"环境",  name:"雷暴",              fmt:"OGG", dur:480, art:true},
+  {cat:"战斗",  name:"01 - Curse of Strahd - Castle Ravenloft - Main Theme (Extended Edition, Remastered)", fmt:"MP3", dur:428, art:true},
+  {cat:"城镇",  name:"瓦拉几亚的黄昏·巴罗维亚小镇集市广场（含钟声与人群环境音·循环版）", fmt:"OGG", dur:361, art:false}
+];
+const SFX_LIB = [
+  {cat:"战斗",  name:"剑击",     fmt:"WAV", dur:1},
+  {cat:"战斗",  name:"重击落地", fmt:"WAV", dur:2},
+  {cat:"战斗",  name:"弓箭破空", fmt:"OGG", dur:1},
+  {cat:"魔法",  name:"火球爆发", fmt:"OGG", dur:3},
+  {cat:"魔法",  name:"治疗术",   fmt:"WAV", dur:2},
+  {cat:"魔法",  name:"传送",     fmt:"OGG", dur:2},
+  {cat:"环境",  name:"开门",     fmt:"WAV", dur:1},
+  {cat:"环境",  name:"脚步",     fmt:"WAV", dur:1},
+  {cat:"环境",  name:"金币",     fmt:"OGG", dur:1},
+  {cat:"生物",  name:"狼嚎",     fmt:"OGG", dur:4},
+  {cat:"生物",  name:"龙吼",     fmt:"OGG", dur:5},
+  {cat:"生物",  name:"亡灵低语", fmt:"OGG", dur:3}
+];
+const DEMO_SPEED = 4;          /* 播放速度压缩，便于观察动效 */
+const SFX_SLOT_COUNT = 4;
+
+/* =====================================================================
+   工具
+   ===================================================================== */
+const $ = id => document.getElementById(id);
+const fmtTime = s => {
+  s = Math.max(0, Math.floor(s));
+  return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+};
+
+/* 封面：真实程序读文件内嵌图（MP3 的 ID3v2 APIC / FLAC 的 PICTURE 块 /
+   OGG 的 METADATA_BLOCK_PICTURE / 同目录 cover.jpg 兜底）。
+   原型按曲名生成一张确定性抽象封面，用来演示"整盘显示图片"的效果。 */
+function coverFor(seed){
+  let h = 7;
+  for (const ch of seed) h = (h * 31 + ch.codePointAt(0)) | 0;
+  const a = ((h % 360) + 360) % 360;
+  const b = (a + 38 + (Math.abs(h >> 3) % 70)) % 360;
+  return [
+    "radial-gradient(circle at 28% 24%, hsl(" + b + " 68% 58%) 0%, rgba(0,0,0,0) 56%)",
+    "radial-gradient(circle at 76% 82%, hsl(" + a + " 58% 40%) 0%, rgba(0,0,0,0) 60%)",
+    "repeating-linear-gradient(118deg, rgba(255,255,255,.07) 0 2px, rgba(0,0,0,0) 2px 13px)",
+    "linear-gradient(158deg, hsl(" + a + " 46% 24%), hsl(" + b + " 42% 11%))"
+  ].join(",");
+}
+function setArt(hostEl, artEl, track){
+  const has = !!(track && track.art);
+  hostEl.classList.toggle("has-art", has);
+  artEl.style.backgroundImage = has ? coverFor(track.name) : "";
+}
+
+/* 多行文本：固定行数框内逐档缩字号；缩到下限仍放不下就放开高度多占一行。绝不截断。 */
+function fitText(el, base, min, maxLines, lh){
+  lh = lh || 1.28;
+  const box = base * lh * maxLines;
+  el.style.lineHeight = lh;
+  el.style.height = box + "px";
+  el.style.fontSize = base + "px";
+  let size = base;
+  while (size > min && el.scrollHeight > box + 1){
+    size = Math.round((size - 0.5) * 2) / 2;
+    el.style.fontSize = size + "px";
+  }
+  const over = el.scrollHeight > box + 1;
+  if (over) el.style.height = "auto";
+  return over;
+}
+/* 单行文本：先吃满可用宽度，再缩字号，最后挂悬停跑马灯 */
+function fitText1Line(wrap, base, min){
+  const inner = wrap.firstElementChild;
+  if (!inner) return false;
+  const width = () => inner.getBoundingClientRect().width;
+  wrap.style.fontSize = base + "px";
+  let size = base;
+  while (size > min && width() > wrap.clientWidth + 1){
+    size = Math.round((size - 0.5) * 2) / 2;
+    wrap.style.fontSize = size + "px";
+  }
+  const over = width() > wrap.clientWidth + 1;
+  if (over){
+    const shift = wrap.clientWidth - width();
+    wrap.classList.add("mq-on");
+    wrap.style.setProperty("--mq-shift", shift.toFixed(1) + "px");
+    wrap.style.setProperty("--mq-dur", Math.max(2.6, Math.abs(shift) / 20).toFixed(1) + "s");
+  } else {
+    wrap.classList.remove("mq-on");
+  }
+  return over;
+}
+function setChipText(text){
+  $("tbChipLabel").textContent = text;
+  $("tbChip").title = text;
+  fitText1Line($("tbChipText"), 11.5, 10);
+}
+
+/* =====================================================================
+   音波图
+   —— 真实程序的数据来自解码后的 PCM 包络（按时间片取峰值）。
+      原型按曲名生成确定性假波形：只要求同一首每次画出来一样，切歌时不跳动。
+   ===================================================================== */
+function waveSeed(name, count){
+  let h = 2166136261 >>> 0;
+  const text = name || "--";
+  for (let i = 0; i < text.length; i++){
+    h ^= text.codePointAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  /* 先取一段白噪声，再做加权滑动平均 —— 相邻采样因此相关，
+     画出来的包络有连贯的峰谷，而不是一根根孤立的尖刺。 */
+  const raw = [];
+  for (let i = 0; i < count; i++){
+    h ^= h << 13; h >>>= 0;
+    h ^= h >>> 17;
+    h ^= h << 5;  h >>>= 0;
+    raw.push((h >>> 8) / 16777215);
+  }
+  const R = Math.max(2, Math.round(count / 18));   /* 平滑半径随采样密度走 */
+  const smooth = [];
+  for (let i = 0; i < count; i++){
+    let sum = 0, wsum = 0;
+    for (let k = -R; k <= R; k++){
+      const j = i + k;
+      if (j < 0 || j >= count) continue;
+      const w = 1 - Math.abs(k) / (R + 1);
+      sum += raw[j] * w;
+      wsum += w;
+    }
+    smooth.push(sum / wsum);
+  }
+  /* 用 92 分位而不是最大值做归一化基准。
+     采样一多，序列里总有离群的高点；拿最大值当分母会把其余全部压低，
+     波形就退化成一条细带 —— 这正是"看着不像波形"的第二个原因。 */
+  const sorted = smooth.slice().sort((a, b) => a - b);
+  let ref = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.92))];
+  if (ref <= 0) ref = 1;
+  const out = [];
+  for (let i = 0; i < count; i++){
+    /* 关键的一步：加对比曲线。
+       滑动平均后的值都挤在 0.5 附近，直接画出来是一条近乎等高的实心带子，
+       看着不像波形。取 pow 2.2 把中低值压下去、峰值留住，
+       再留 10% 底噪，才有真实音频那种"有峰有谷、但也有持续声底"的样子。 */
+    let v = Math.min(1, smooth[i] / ref);
+    v = Math.pow(v, 2.2);
+    v = 0.10 + 0.90 * v;
+    /* 两端渐弱，读起来像一段完整的曲子而不是被切断的噪声 */
+    const env = 0.55 + 0.45 * Math.sin(Math.PI * (i + 0.5) / count);
+    out.push(Math.max(0.02, Math.min(1, v * env)));
+  }
+  /* 最后线性拉伸到 0.05~1.0：不管哪首曲子，波形都铺满可用高度。
+     少了这一步，不同曲子的波形高低差很多，有的几乎是一条平线。 */
+  let lo = Infinity, hi = -Infinity;
+  for (const v of out){ if (v < lo) lo = v; if (v > hi) hi = v; }
+  const span = Math.max(1e-6, hi - lo);
+  for (let i = 0; i < out.length; i++){
+    out[i] = 0.05 + 0.95 * (out[i] - lo) / span;
+  }
+  return out;
+}
+/* 音波图 = 一条上下对称的连续包络（像音频编辑器里的波形），不是一排矩形。
+   已播 / 未播用两条同形状的路径叠加，靠 clip-path 遮罩露出已播部分。
+   遮罩值写在 inline style 上（见 setWaveProgress）—— 样式表里再写一条会把它盖掉。 */
+const WAVE_VB_W = 400;
+const WAVE_VB_H = 100;
+
+function buildWave(el, name, count){
+  const seed = waveSeed(name, count);
+  const m = seed.length;
+  if (!m) return;
+  const cy = WAVE_VB_H / 2, amp = cy * 0.94;
+  let d = "";
+  for (let i = 0; i < m; i++){                       /* 上包络，从左到右 */
+    const x = (i / (m - 1)) * WAVE_VB_W;
+    d += (i === 0 ? "M" : "L") + x.toFixed(1) + " " + (cy - seed[i] * amp).toFixed(1) + " ";
+  }
+  for (let i = m - 1; i >= 0; i--){                  /* 下包络，镜像走回来 */
+    const x = (i / (m - 1)) * WAVE_VB_W;
+    d += "L" + x.toFixed(1) + " " + (cy + seed[i] * amp).toFixed(1) + " ";
+  }
+  d += "Z";
+  el.textContent = "";
+  el.insertAdjacentHTML("beforeend",
+      '<svg viewBox="0 0 ' + WAVE_VB_W + " " + WAVE_VB_H + '" preserveAspectRatio="none">'
+    +   '<path class="wv-base" d="' + d + '"/>'
+    +   '<path class="wv-play" d="' + d + '"/>'
+    +   "</svg>");
+}
+function setWaveProgress(el, frac){
+  const f = Math.max(0, Math.min(1, frac));
+  const play = el.querySelector(".wv-play");
+  if (!play) return;
+  /* 遮罩：底路径是常态灰（未播）、上路径是强调色（已播），
+     靠 clip-path 从右侧收掉未播部分。
+     参考盒是路径自身的包围盒，而路径横向铺满整个 viewBox，
+     所以两侧百分比正好等于时间轴上的百分比。 */
+  play.style.clipPath = "inset(0 " + ((1 - f) * 100).toFixed(2) + "% 0 0)";
+}
+
+/* =====================================================================
+   悬停预览条
+   —— 独立一行、不覆盖输入框，所以不悬停时搜索框照常可用。
+      悬停曲目卡或上一首/下一首时填完整曲名 + 音波图。
+   ===================================================================== */
+function peekIds(kind){
+  const k = kind === "bgm" ? "Bgm" : "Sfx";
+  /* 高亮的是整个搜索框 —— 预览区就在它里面，两者本来就是同一个盒子 */
+  return {
+    box: $("searchBox" + k),
+    txt: $("peekTxt" + k),
+    wave: $("peekWave" + k)
+  };
+}
+function fillPeek(kind, track){
+  /* 上一首/下一首为空时传进来的是 null，占位文案 "—" 也不算有效曲目 ——
+     两种都不该弹出预览（空按钮悬停弹出一个"—"的波形没有意义）。 */
+  if (!track || !track.name || track.name === "—") return;
+  const p = peekIds(kind);
+  p.box.classList.add("active");
+  p.box.style.setProperty("--accent", kind === "bgm" ? "var(--bgm)" : "var(--sfx)");
+  p.box.style.setProperty("--accent-soft", kind === "bgm" ? "var(--bgm-soft)" : "var(--sfx-soft)");
+  p.wave.classList.add("sb-on");
+  p.txt.textContent = track.name;
+  buildWave(p.wave, track.name, 64);
+}
+function clearPeek(kind){
+  const p = peekIds(kind);
+  p.box.classList.remove("active");
+  p.wave.classList.remove("sb-on");
+  p.txt.textContent = kind === "bgm" ? "悬停曲目卡查看完整曲名" : "悬停音效卡查看完整名称";
+  p.wave.textContent = "";
+}
+/* 悬停绑定只做一次，之后更新要展示的曲目即可（避免重复绑定叠加监听） */
+function bindPeek(el, kind, track){
+  if (el.dataset.peekBound !== "1"){
+    el.dataset.peekBound = "1";
+    el.addEventListener("mouseenter", () => fillPeek(kind, el._peekTrack));
+    el.addEventListener("mouseleave", () => clearPeek(kind));
+  }
+  el._peekTrack = track;
+}
+
+/* =====================================================================
+   悬浮球 / 主面板 两态
+   ===================================================================== */
+const orbLayer = $("orbLayer"), panelLayer = $("panelLayer"), panel = $("panel");
+const orb = $("orb"), orbRing = $("orbRing");
+
+function setOriginFromOrb(){
+  const o = orb.getBoundingClientRect();
+  const p = panel.getBoundingClientRect();
+  const x = ((o.left + o.width / 2) - p.left) / p.width * 100;
+  const y = ((o.top + o.height / 2) - p.top) / p.height * 100;
+  panel.style.setProperty("--ox", Math.max(-30, Math.min(130, x)) + "%");
+  panel.style.setProperty("--oy", Math.max(-30, Math.min(130, y)) + "%");
+}
+function showOrb(){
+  setOriginFromOrb();
+  panelLayer.classList.remove("show");
+  setTimeout(() => orbLayer.classList.remove("hidden"), 120);
+  $("btnModeOrb").classList.add("on");
+  $("btnModePanel").classList.remove("on");
+}
+function showPanel(){
+  setOriginFromOrb();
+  orbLayer.classList.add("hidden");
+  setTimeout(() => panelLayer.classList.add("show"), 60);
+  $("btnModePanel").classList.add("on");
+  $("btnModeOrb").classList.remove("on");
+}
+orb.addEventListener("click", showPanel);
+$("btnCollapse").addEventListener("click", showOrb);
+$("btnClose").addEventListener("click", showOrb);
+$("btnPin").addEventListener("click", e => e.currentTarget.classList.toggle("on"));
+$("btnModeOrb").addEventListener("click", showOrb);
+$("btnModePanel").addEventListener("click", showPanel);
+
+/* =====================================================================
+   总线音量（BGM / SFX 两条独立总线）
+   ===================================================================== */
+const busGain = { bgm:1, sfx:1 };
+function bindSlider(sl, onChange){
+  const fill = sl.querySelector(".sl-fill"), knob = sl.querySelector(".sl-knob");
+  let pct = 100;
+  const set = (v) => {
+    pct = Math.max(0, Math.min(100, v));
+    fill.style.width = pct + "%";
+    knob.style.left = pct + "%";
+    onChange(pct / 100, Math.round(pct));
+  };
+  const fromEvent = e => {
+    const r = sl.getBoundingClientRect();
+    set((e.clientX - r.left) / r.width * 100);
+  };
+  let dragging = false;
+  sl.addEventListener("pointerdown", e => {
+    dragging = true;
+    fromEvent(e);                                   /* 先取值：捕获失败也不影响这次操作 */
+    try { sl.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  sl.addEventListener("pointermove", e => { if (dragging) fromEvent(e); });
+  sl.addEventListener("pointerup", () => { dragging = false; });
+  sl.addEventListener("wheel", e => {
+    e.preventDefault();
+    set(pct + (e.deltaY < 0 ? 5 : -5));
+  }, {passive:false});
+  set(100);
+}
+bindSlider($("slBgm"), (g, v) => { busGain.bgm = g; $("valBgm").textContent = v + "%"; });
+bindSlider($("slSfx"), (g, v) => { busGain.sfx = g; $("valSfx").textContent = v + "%"; });
+
+/* 电平表：让"两条总线各自独立"看得见 */
+function tickMeters(){
+  const live = sfxSlots.filter(Boolean);
+  const sfxPeak = live.length ? Math.max.apply(null, live.map(s => s.opt.vol)) : 0;
+  const act = {
+    bgm: (state.bgm.playing && !state.bgm.paused) ? busGain.bgm : 0,
+    sfx: sfxPeak * busGain.sfx
+  };
+  [["bgm", $("meterBgm")], ["sfx", $("meterSfx")]].forEach(([bus, meter]) => {
+    const bars = meter.children, a = act[bus];
+    meter.classList.toggle("on", a > 0.001);
+    for (let i = 0; i < bars.length; i++){
+      if (a <= 0.001){ bars[i].style.height = "30%"; continue; }
+      bars[i].style.height = Math.min(100, (34 + (i / bars.length) * 64 + Math.random() * 30) * a) + "%";
+    }
+  });
+}
+setInterval(tickMeters, 90);
+
+/* =====================================================================
+   状态
+   ===================================================================== */
+const state = { bgm: { playing:false, paused:false, track:null, pos:0, dur:0 } };
+const hist = { list:[], idx:-1 };
+/* 音效四台：每台有自己的音量与开关，默认循环开、淡入淡出关 */
+const sfxSlots = [null, null, null, null];
+const sfxTimers = [null, null, null, null];
+const sfxOpts = [];
+for (let i = 0; i < SFX_SLOT_COUNT; i++) sfxOpts.push({ vol:1, loop:true, fade:false });
+
+/* =====================================================================
+   构建音效台
+   排版：h{ v{ h{ v{功能按钮}, 唱片 }, 音波图 }, 音量条 }
+     · 最外层横向 = [左侧内容块] [最右侧竖向音量条]
+     · 内容块纵向 = [功能按钮列 + 唱片 + 曲名] 一行，下面接音波图
+   ===================================================================== */
+const sfxDecks = $("sfxDecks");
+for (let i = 0; i < SFX_SLOT_COUNT; i++){
+  const el = document.createElement("div");
+  el.className = "deck deck-sfx";
+  el.dataset.bus = "sfx";
+  el.innerHTML =
+      '<div class="sfx-body">'
+    +   '<div class="sfx-top">'
+    +     '<div class="sfx-funcs">'
+    +       '<button class="fbtn on" data-role="loop" title="循环">循环</button>'
+    +       '<button class="fbtn" data-role="fade" title="淡入淡出">淡入</button>'
+    +     '</div>'
+    +     '<div class="deck-stage">'
+    +       '<div class="dropring"></div>'
+    +       '<div class="vinyl idle" data-role="vinyl" title="点击停止">'
+    +         '<div class="vinyl-art" data-role="art"></div>'
+    +         '<div class="vinyl-core"></div>'
+    +         '<div class="vinyl-hole"></div>'
+    +       '</div>'
+    +       '<div class="tonearm" data-role="arm"><div class="tonearm-base"></div></div>'
+    +     '</div>'
+    +     '<div class="sfx-name" data-role="name">空闲</div>'
+    +   '</div>'
+    +   '<div class="wave pending" data-role="wave"></div>'
+    + '</div>'
+    + '<div class="vsl">'
+    +   '<svg class="vsl-ico" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/></svg>'
+    +   '<div class="vsl-rail" data-role="vol"><div class="vsl-fill" data-role="volfill"></div></div>'
+    + '</div>';
+  sfxDecks.appendChild(el);
+
+  /* 点击唱片 = 停止该台（音效是瞬态的，停止比暂停自然；没有停止按钮） */
+  /* 点唱片 = 暂停 / 继续，与 BGM 同一个手势。清除交给音效自然结束。 */
+  el.querySelector('[data-role="vinyl"]').addEventListener("click", () => toggleSfxPause(i));
+
+  /* 左侧竖排功能按钮，每台独立 */
+  el.querySelector('[data-role="loop"]').addEventListener("click", () => {
+    sfxOpts[i].loop = !sfxOpts[i].loop; paintSlotOpts(i);
+  });
+  el.querySelector('[data-role="fade"]').addEventListener("click", () => {
+    sfxOpts[i].fade = !sfxOpts[i].fade; paintSlotOpts(i);
+  });
+
+  /* 最右侧竖向音量条，每台独立 */
+  const rail = el.querySelector('[data-role="vol"]');
+  const vfill = el.querySelector('[data-role="volfill"]');
+  const setVol = (v) => {
+    v = Math.max(0, Math.min(1, v));
+    vfill.style.height = (v * 100) + "%";
+    sfxOpts[i].vol = v;
+  };
+  let vdrag = false;
+  const volFromEvent = (e) => {
+    const r = rail.getBoundingClientRect();
+    setVol((r.bottom - e.clientY) / r.height);
+  };
+  rail.addEventListener("pointerdown", e => {
+    vdrag = true;
+    volFromEvent(e);                                /* 先取值，再捕获 */
+    try { rail.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  rail.addEventListener("pointermove", e => { if (vdrag) volFromEvent(e); });
+  rail.addEventListener("pointerup", () => { vdrag = false; });
+  rail.addEventListener("wheel", e => {
+    e.preventDefault();
+    setVol(sfxOpts[i].vol + (e.deltaY < 0 ? 0.05 : -0.05));
+  }, {passive:false});
+  setVol(1);
+  paintSlotOpts(i);
+
+  /* 音波图：点击与拖拽都能快进 */
+  const waveEl = el.querySelector('[data-role="wave"]');
+  let sdrag = false;
+  const seekFromEvent = (e) => {
+    const r = waveEl.getBoundingClientRect();
+    if (r.width > 0) seekSfx(i, (e.clientX - r.left) / r.width);
+  };
+  waveEl.addEventListener("pointerdown", e => {
+    if (!sfxSlots[i]) return;                         /* 没在响就不响应 */
+    sdrag = true;
+    seekFromEvent(e);
+    try { waveEl.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  waveEl.addEventListener("pointermove", e => { if (sdrag) seekFromEvent(e); });
+  waveEl.addEventListener("pointerup", () => { sdrag = false; });
+
+  bindDeckDrop(el, "sfx", i);
+}
+/* 总线状态条：SFX 侧要跟着"有几台在响"更新。
+   （重写脚本时漏过这个函数一次，导致两个音效在响、底部仍显示"空闲"。） */
+function refreshSfxBus(){
+  const live = sfxSlots.filter(Boolean);
+  $("busSfx").classList.toggle("live", live.length > 0);
+  $("busSfxTxt").textContent = live.length === 0
+    ? "空闲"
+    : (live.length === 1
+        ? (live[0].paused ? "已暂停 · " + live[0].name : live[0].name)
+        : live.length + " 个音效在响");
+}
+
+function paintSlotOpts(i){
+  const el = sfxDecks.children[i];
+  el.querySelector('[data-role="loop"]').classList.toggle("on", sfxOpts[i].loop);
+  el.querySelector('[data-role="fade"]').classList.toggle("on", sfxOpts[i].fade);
+}
+function stopSlot(i){
+  clearTimeout(sfxTimers[i]);
+  sfxSlots[i] = null;
+  const el = sfxDecks.children[i];
+  el.classList.remove("playing");
+  const nm = el.querySelector('[data-role="name"]');
+  nm.textContent = "空闲";
+  nm.classList.remove("live");
+  nm.style.cssText = "";
+  nm.title = "";
+  el.querySelector('[data-role="arm"]').style.transform = "";
+  const v = el.querySelector('[data-role="vinyl"]');
+  v.classList.remove("spin");
+  v.classList.remove("paused");
+  v.classList.remove("clickable");
+  v.classList.add("idle");
+  setArt(v, el.querySelector('[data-role="art"]'), null);
+  const w = el.querySelector('[data-role="wave"]');
+  w.classList.add("pending");
+  buildWave(w, "空闲", 26);
+  setWaveProgress(w, 0);
+  refreshSfxBus();
+}
+
+/* =====================================================================
+   曲库
+   —— 音乐与音效都用卡片网格。卡片宽度固定，所以名字用单行省略号；
+      完整曲名由上方那条悬停预览条负责（见 fillPeek）。
+   ===================================================================== */
+function buildCard(t, kind, box){
+  const el = document.createElement("div");
+  el.className = "track";
+  el.draggable = true;
+  el.innerHTML = '<span class="track-badge">' + t.fmt + '</span>'
+    + '<span class="track-txt">'
+    +   '<span class="track-name"></span>'
+    +   '<span class="track-meta">' + t.cat + ' · '
+    +     (kind === "bgm" ? fmtTime(t.dur) : t.dur.toFixed(1) + " 秒") + '</span>'
+    + '</span>'
+    + '<span class="track-eq"><i></i><i></i><i></i></span>';
+  const lbl = el.querySelector(".track-name");
+  lbl.textContent = t.name;
+  lbl.title = t.name;
+  el.addEventListener("click", () => selectIn(box, el));
+  el.addEventListener("dblclick", () => { if (kind === "bgm") playBgm(t); else playSfxAuto(t); });
+  bindPeek(el, kind, t);
+  bindDrag(el, kind, t);
+  return el;
+}
+function selectIn(box, el){
+  box.querySelectorAll(".sel").forEach(x => x.classList.remove("sel"));
+  el.classList.add("sel");
+}
+function bindDrag(el, kind, t){
+  el.addEventListener("dragstart", e => {
+    e.dataTransfer.effectAllowed = "copy";
+    e.dataTransfer.setData("text/plain", JSON.stringify({kind: kind, track: t}));
+    const g = $("ghost");
+    g.classList.toggle("sfx", kind === "sfx");
+    $("ghostName").textContent = t.name;
+    e.dataTransfer.setDragImage(g, 12, 18);
+  });
+  el.addEventListener("dragend", () => {
+    document.querySelectorAll(".deck.drop").forEach(d => d.classList.remove("drop"));
+  });
+}
+function buildLibrary(kind){
+  const lib  = kind === "bgm" ? BGM_LIB : SFX_LIB;
+  const chips = $(kind === "bgm" ? "chipsBgm" : "chipsSfx");
+  const cats = ["全部"].concat(Array.from(new Set(lib.map(t => t.cat))));
+  chips.textContent = "";
+  cats.forEach((c, i) => {
+    const b = document.createElement("button");
+    b.className = "chip" + (i === 0 ? " on" : "");
+    b.textContent = c;
+    b.addEventListener("click", () => {
+      chips.querySelectorAll(".chip").forEach(x => x.classList.remove("on"));
+      b.classList.add("on");
+      render(kind, c, $(kind === "bgm" ? "searchBgm" : "searchSfx").value);
+    });
+    chips.appendChild(b);
+  });
+  render(kind, "全部", "");
+}
+function render(kind, cat, q){
+  const lib  = kind === "bgm" ? BGM_LIB : SFX_LIB;
+  const grid = $(kind === "bgm" ? "gridBgm" : "gridSfx");
+  q = (q || "").trim().toLowerCase();
+  const items = lib.filter(t =>
+    (cat === "全部" || t.cat === cat) && (!q || t.name.toLowerCase().indexOf(q) >= 0));
+  grid.textContent = "";
+  items.forEach(t => grid.appendChild(buildCard(t, kind, grid)));
+  markPlayingTrack(state.bgm.track ? state.bgm.track.name : null);
+}
+buildLibrary("bgm");
+buildLibrary("sfx");
+$("searchBgm").addEventListener("input", e => {
+  const on = $("chipsBgm").querySelector(".chip.on");
+  render("bgm", on ? on.textContent : "全部", e.target.value);
+});
+$("searchSfx").addEventListener("input", e => {
+  const on = $("chipsSfx").querySelector(".chip.on");
+  render("sfx", on ? on.textContent : "全部", e.target.value);
+});
+
+/* =====================================================================
+   拖放：落到唱片台
+   ===================================================================== */
+function bindDeckDrop(el, bus, slot){
+  let depth = 0;
+  el.addEventListener("dragover", e => {
+    if (e.dataTransfer.types.indexOf("text/plain") < 0) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    if (depth === 0) el.classList.add("drop");
+    depth = 1;
+  });
+  el.addEventListener("dragleave", () => { depth = 0; el.classList.remove("drop"); });
+  el.addEventListener("drop", e => {
+    e.preventDefault(); depth = 0; el.classList.remove("drop");
+    let payload;
+    try { payload = JSON.parse(e.dataTransfer.getData("text/plain")); } catch (_) { return; }
+    if (!payload || !payload.track) return;
+    if (bus === "bgm") playBgm(payload.track);
+    else if (slot === undefined) playSfxAuto(payload.track);
+    else playSfxSlot(slot, payload.track);
+  });
+}
+bindDeckDrop($("deckBgm"), "bgm");
+
+/* =====================================================================
+   BGM 播放
+   ===================================================================== */
+const vinylBgm = $("vinylBgm"), armBgm = $("armBgm"), deckBgm = $("deckBgm");
+let bgmTimer = null;
+/* 采样密度决定"像不像波形"：56 个采样铺在 400px 上每格 7px，画出来是条平滑带子；
+   160 个（约 2.5px 一格）才有真实音频那种细节起伏。 */
+const BGM_WAVE_BARS = 160;
+
+/* 点击唱片本体 = 暂停 / 继续。没有按钮、没有文字提示，
+   状态由唱片自己表达：停转 + 唱针抬起 + 中心圆变灰。 */
+vinylBgm.addEventListener("click", () => {
+  if (!state.bgm.track) return;
+  state.bgm.paused = !state.bgm.paused;
+  /* 刻意不摘 spin：摘掉类会把动画重置回 0 度，盘会"啪"地弹回原位。
+     改为在 spin 之上加/去 paused，用 animation-play-state 停在当前角度。 */
+  vinylBgm.classList.toggle("paused", state.bgm.paused);
+  orb.classList.toggle("paused", state.bgm.paused);
+  deckBgm.classList.toggle("playing", !state.bgm.paused);
+  $("busBgmTxt").textContent = state.bgm.paused
+    ? "已暂停 · " + state.bgm.track.name
+    : state.bgm.track.name;
+  setChipText((state.bgm.paused ? "已暂停 · " : "正在播放 · ") + state.bgm.track.name);
+  $("tbChip").classList.toggle("live", !state.bgm.paused);
+});
+
+function playBgm(t){
+  state.bgm.track = t;
+  state.bgm.dur   = t.dur / DEMO_SPEED;
+  state.bgm.pos   = 0;
+  state.bgm.playing = true;
+  state.bgm.paused  = false;
+
+  const nm = $("bgmName");
+  nm.textContent = t.name;
+  nm.title = t.name;
+  fitText(nm, 18, 13, 2, 1.24);
+  $("bgmCat").textContent = t.cat;
+  $("bgmCat").classList.add("accent");
+  $("bgmFmt").textContent = t.fmt;
+  setArt(vinylBgm, $("artBgm"), t);   /* 有封面 → 整盘当光盘显示 */
+  setArt(orb, $("orbArt"), t);        /* 悬浮球同样显示印刷封面 */
+  $("pgTotal").textContent = fmtTime(t.dur);
+
+  deckBgm.classList.add("playing");
+  vinylBgm.classList.remove("idle");
+  vinylBgm.classList.remove("paused");
+  vinylBgm.classList.add("spin");
+  vinylBgm.classList.add("clickable");     /* 有曲目才给悬停特效与手型光标 */
+  orb.classList.remove("paused");
+
+  orb.classList.add("is-playing");
+  $("tbChip").classList.add("live");
+  setChipText("正在播放 · " + t.name);
+  $("busBgm").classList.add("live");
+  $("busBgmTxt").textContent = t.name;
+
+  /* 浏览器式历史：新曲追加到末尾，往回跳则截断之后的部分 */
+  if (hist.idx < 0 || hist.list[hist.idx].name !== t.name){
+    if (hist.idx < hist.list.length - 1) hist.list = hist.list.slice(0, hist.idx + 1);
+    hist.list.push(t);
+    if (hist.list.length > 50) hist.list = hist.list.slice(-50);
+    hist.idx = hist.list.length - 1;
+  }
+  refreshHist();
+  markPlayingTrack(t.name);
+
+  buildWave($("waveBgm"), t.name, BGM_WAVE_BARS);
+  $("waveBgm").classList.remove("pending");
+  /* 留一份包络，用来驱动悬浮球的辉光幅度 */
+  state.bgm.seed = waveSeed(t.name, BGM_WAVE_BARS);
+  paintBgmProgress();
+
+  clearInterval(bgmTimer);
+  bgmTimer = setInterval(() => {
+    if (!state.bgm.playing || state.bgm.paused) return;
+    /* 拖拽中必须让位：BGM 是松手才真正 seek，定时器若继续按旧的 pos 重画，
+       就会和拖拽预览来回抢，看起来就是"闪两下才到位置"。 */
+    if (waveDrag) return;
+    state.bgm.pos += 0.1;
+    if (state.bgm.pos >= state.bgm.dur) state.bgm.pos = 0;
+    paintBgmProgress();
+  }, 100);
+}
+function paintBgmProgress(){
+  const p = state.bgm.dur > 0 ? state.bgm.pos / state.bgm.dur : 0;
+  setWaveProgress($("waveBgm"), p);
+  $("pgElapsed").textContent = fmtTime(state.bgm.pos * DEMO_SPEED);
+  orbRing.style.setProperty("--p", (p * 100).toFixed(1));
+  /* 球的辉光幅度 = 当前播放位置处的包络值。
+     这真的是"跟着音乐走"，而不是凭空造一个节拍 ——
+     真实程序里把 state.bgm.seed 换成解码后的 PCM 包络即可，接口不用动。 */
+  const seed = state.bgm.seed;
+  const amp = seed && seed.length
+    ? seed[Math.min(seed.length - 1, Math.floor(p * seed.length))]
+    : 0;
+  orb.style.setProperty("--amp", amp.toFixed(3));
+}
+function stopBgm(){
+  state.bgm.playing = false;
+  state.bgm.paused = false;
+  state.bgm.track = null;
+  state.bgm.pos = 0;
+  clearInterval(bgmTimer);
+  vinylBgm.classList.remove("spin");
+  vinylBgm.classList.remove("paused");
+  vinylBgm.classList.remove("clickable");
+  vinylBgm.classList.add("idle");
+  orb.classList.remove("paused");
+  deckBgm.classList.remove("playing");
+  state.bgm.seed = null;
+  orb.style.setProperty("--amp", "0");
+  armBgm.style.transform = "";
+  const nm = $("bgmName");
+  nm.textContent = "-- 空闲 --";
+  nm.title = "";
+  nm.style.cssText = "";
+  setArt(vinylBgm, $("artBgm"), null);
+  setArt(orb, $("orbArt"), null);
+  $("bgmCat").textContent = "未选择";
+  $("bgmCat").classList.remove("accent");
+  $("bgmFmt").textContent = "—";
+  $("pgElapsed").textContent = "00:00";
+  $("pgTotal").textContent = "00:00";
+  const w = $("waveBgm");
+  w.classList.add("pending");
+  buildWave(w, "空闲", BGM_WAVE_BARS);
+  setWaveProgress(w, 0);
+  orb.classList.remove("is-playing");
+  orbRing.style.setProperty("--p", 0);
+  $("tbChip").classList.remove("live");
+  setChipText("空闲");
+  $("busBgm").classList.remove("live");
+  $("busBgmTxt").textContent = "空闲";
+  markPlayingTrack(null);
+}
+function setHistText(wrap, text, btn){
+  wrap.firstElementChild.textContent = text;
+  btn.title = text === "—" ? "" : text;
+  fitText1Line(wrap, 11.5, 9.5);
+}
+function refreshHist(){
+  const canPrev = hist.idx > 0;
+  const canNext = hist.idx >= 0 && hist.idx < hist.list.length - 1;
+  const bp = $("histPrev"), bn = $("histNext");
+  bp.disabled = !canPrev;
+  bn.disabled = !canNext;
+  /* 没有历史时不留一个"——"占位，直接写按钮的名字，空态也读得懂 */
+  setHistText($("histPrevText"), canPrev ? hist.list[hist.idx - 1].name : "上一首", bp);
+  setHistText($("histNextText"), canNext ? hist.list[hist.idx + 1].name : "下一首", bn);
+  /* 悬停上一首 / 下一首也走预览区；没有对应曲目时传 null，不触发预览 */
+  bindPeek(bp, "bgm", canPrev ? hist.list[hist.idx - 1] : null);
+  bindPeek(bn, "bgm", canNext ? hist.list[hist.idx + 1] : null);
+}
+$("histPrev").addEventListener("click", () => {
+  if (hist.idx > 0){ hist.idx--; playBgm(hist.list[hist.idx]); }
+});
+$("histNext").addEventListener("click", () => {
+  if (hist.idx < hist.list.length - 1){ hist.idx++; playBgm(hist.list[hist.idx]); }
+});
+
+/* 音波图拖拽跳转：拖动中只更新画面，松手才真正 seek（连续 seek 会爆音） */
+const waveBgm = $("waveBgm");
+let waveDrag = false;
+function waveFracFromEvent(e){
+  const r = waveBgm.getBoundingClientRect();
+  const p = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  setWaveProgress(waveBgm, p);
+  $("pgElapsed").textContent = fmtTime(p * (state.bgm.dur || 0) * DEMO_SPEED);
+  return p;
+}
+waveBgm.addEventListener("pointerdown", e => {
+  if (!state.bgm.track) return;
+  waveDrag = true;
+  waveFracFromEvent(e);                             /* 先取值，再捕获 */
+  try { waveBgm.setPointerCapture(e.pointerId); } catch (_) {}
+});
+waveBgm.addEventListener("pointermove", e => { if (waveDrag) waveFracFromEvent(e); });
+waveBgm.addEventListener("pointerup", e => {
+  if (!waveDrag) return;
+  waveDrag = false;
+  const p = waveFracFromEvent(e);
+  if (state.bgm.dur > 0) state.bgm.pos = p * state.bgm.dur;
+  paintBgmProgress();          /* 松手立刻按最终位置重画一次，收尾干净 */
+});
+
+/* 本台开关：循环 / 淡入淡出 / 从头播放 */
+const deckOpts = { loop:true, fade:true, restart:false };
+function paintOpts(){
+  $("optLoop").classList.toggle("on", deckOpts.loop);
+  $("optFade").classList.toggle("on", deckOpts.fade);
+  $("optRestart").classList.toggle("on", deckOpts.restart);
+}
+$("optLoop").addEventListener("click", () => { deckOpts.loop = !deckOpts.loop; paintOpts(); });
+$("optFade").addEventListener("click", () => { deckOpts.fade = !deckOpts.fade; paintOpts(); });
+$("optRestart").addEventListener("click", () => { deckOpts.restart = !deckOpts.restart; paintOpts(); });
+paintOpts();
+
+/* =====================================================================
+   SFX 播放
+   ===================================================================== */
+function playSfxAuto(t){
+  let slot = -1;
+  for (let i = 0; i < SFX_SLOT_COUNT; i++){ if (sfxSlots[i] === null){ slot = i; break; } }
+  if (slot < 0){
+    /* 四台满：替换最早触发的那一台 */
+    slot = 0;
+    let oldest = Infinity;
+    sfxSlots.forEach((s, i) => { if (s && s.started < oldest){ oldest = s.started; slot = i; } });
+  }
+  playSfxSlot(slot, t);
+}
+/* 音效台的计时拆成"已累计"+"本段起点"两段：
+   暂停时把当前段结算进累计值并撤掉自动停止定时器，恢复时接着走。
+   这样点唱片是暂停（和 BGM 同一个手势），已播进度不会被抹掉。 */
+function slotElapsed(s){
+  return s.acc + (s.paused ? 0 : performance.now() - s.startedAt);
+}
+function scheduleSlotStop(slot){
+  const s = sfxSlots[slot];
+  if (!s) return;
+  clearTimeout(sfxTimers[slot]);
+  sfxTimers[slot] = setTimeout(() => stopSlot(slot), Math.max(0, s.total - slotElapsed(s)));
+}
+function runSlotTick(slot){
+  const s0 = sfxSlots[slot];
+  if (!s0) return;
+  /* 令牌：seek 会再起一个循环，老循环靠令牌作废退出，避免两条循环抢着重画 */
+  const token = (s0.tickToken = (s0.tickToken || 0) + 1);
+  const w = sfxDecks.children[slot].querySelector('[data-role="wave"]');
+  const step = () => {
+    const s = sfxSlots[slot];
+    if (!s || s.tickToken !== token) return;          /* 已被替换、停止或 seek 作废 */
+    setWaveProgress(w, Math.min(1, slotElapsed(s) / s.total));
+    if (slotElapsed(s) < s.total) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+/* 音效也能快进：直接把已累计时间挪到目标位置，并重排自动结束定时器。
+   音效可以立即提交（不像 BGM 要松手才 seek），所以拖拽中就能实时看到。 */
+function seekSfx(slot, frac){
+  const s = sfxSlots[slot];
+  if (!s) return;
+  const f = Math.max(0, Math.min(1, frac));
+  s.acc = f * s.total;
+  s.startedAt = performance.now();
+  setWaveProgress(sfxDecks.children[slot].querySelector('[data-role="wave"]'), f);
+  if (!s.paused){
+    scheduleSlotStop(slot);
+    runSlotTick(slot);
+  }
+}
+function toggleSfxPause(slot){
+  const s = sfxSlots[slot];
+  if (!s) return;
+  const v = sfxDecks.children[slot].querySelector('[data-role="vinyl"]');
+  if (s.paused){
+    s.paused = false;
+    s.startedAt = performance.now();
+    v.classList.remove("paused");
+    scheduleSlotStop(slot);
+    runSlotTick(slot);
+  } else {
+    s.acc = slotElapsed(s);
+    s.paused = true;
+    v.classList.add("paused");                        /* 停转 + 压暗，和 BGM 同一种读法 */
+    clearTimeout(sfxTimers[slot]);
+  }
+  refreshSfxBus();
+}
+
+function playSfxSlot(slot, t){
+  clearTimeout(sfxTimers[slot]);
+  const el = sfxDecks.children[slot];
+  const total = Math.max(400, t.dur * 1000);
+  sfxSlots[slot] = {
+    name: t.name, opt: sfxOpts[slot], total: total,
+    acc: 0, startedAt: performance.now(), paused: false
+  };
+
+  el.classList.add("playing");
+  const nm = el.querySelector('[data-role="name"]');
+  nm.textContent = t.name;
+  nm.title = t.name;
+  nm.classList.add("live");
+
+  const v = el.querySelector('[data-role="vinyl"]');
+  setArt(v, el.querySelector('[data-role="art"]'), t);
+  v.classList.remove("idle");
+  v.classList.remove("paused");
+  v.classList.add("clickable");
+  /* 音效台也转：拖一首 BGM 过来时它就是一段长音频，不转看不出在放 */
+  v.classList.add("spin");
+  el.querySelector('[data-role="arm"]').style.transform = "rotate(12deg)";
+
+  const w = el.querySelector('[data-role="wave"]');
+  w.classList.remove("pending");
+  buildWave(w, t.name, 80);
+  setWaveProgress(w, 0);
+
+  runSlotTick(slot);
+  scheduleSlotStop(slot);
+  refreshSfxBus();
+}
+
+/* =====================================================================
+   正在播放标记
+   ===================================================================== */
+function markPlayingTrack(name){
+  document.querySelectorAll(".track").forEach(el => {
+    const lbl = el.querySelector(".track-name");
+    if (!lbl) return;
+    el.classList.toggle("playing", name !== null && lbl.textContent === name);
+  });
+}
+
+/* =====================================================================
+   顶部演示按钮
+   ===================================================================== */
+$("btnDemoBg").addEventListener("click", () => {
+  showPanel();
+  setTimeout(() => {
+    let i = -1;
+    BGM_LIB.forEach((t, k) => { if (t.name.indexOf("Curse") >= 0) i = k; });
+    playBgm(BGM_LIB[i >= 0 ? i : 2]);
+  }, 260);
+});
+$("btnDemoSfx").addEventListener("click", () => {
+  showPanel();
+  const picks = [2, 3, 9, 0];
+  picks.forEach((p, i) => setTimeout(() => playSfxSlot(i, SFX_LIB[p]), 260 + i * 120));
+});
+$("btnDemoDrag").addEventListener("click", () => {
+  showPanel();
+  setTimeout(() => {
+    const d = $("deckBgm");
+    d.classList.add("drop");
+    setTimeout(() => d.classList.remove("drop"), 1600);
+  }, 300);
+});
+$("btnReset").addEventListener("click", () => {
+  stopBgm();
+  for (let i = 0; i < SFX_SLOT_COUNT; i++) stopSlot(i);
+  hist.list = []; hist.idx = -1;
+  refreshHist();
+  clearPeek("bgm");
+  clearPeek("sfx");
+  showPanel();
+});
+
+/* =====================================================================
+   初始化
+   ===================================================================== */
+for (let i = 0; i < SFX_SLOT_COUNT; i++) stopSlot(i);
+stopBgm();
+clearPeek("bgm");
+clearPeek("sfx");
+tickMeters();
+setOriginFromOrb();
+window.addEventListener("resize", setOriginFromOrb);
+
+/* 供自动化验证与调样式用 */
+window.__demo = {
+  showOrb: showOrb,
+  showPanel: showPanel,
+  playBgm: playBgm,
+  playSfxSlot: playSfxSlot,
+  playSfxAuto: playSfxAuto,
+  stopBgm: stopBgm,
+  stopSlot: stopSlot,
+  toggleSfxPause: toggleSfxPause,
+  seekSfx: seekSfx,
+  /* 跳到指定比例，便于验证进度与进度环 */
+  seekBgm: function(frac){
+    if (!state.bgm.track) return false;
+    state.bgm.pos = Math.max(0, Math.min(1, frac)) * state.bgm.dur;
+    paintBgmProgress();
+    return true;
+  },
+  fillPeek: fillPeek,
+  clearPeek: clearPeek,
+  buildWave: buildWave,
+  waveSeed: waveSeed,
+  coverFor: coverFor,
+  setArt: setArt,
+  fitText: fitText,
+  fitText1Line: fitText1Line,
+  setChipText: setChipText,
+  snapshot: function(){
+    return {
+      bgm: { track: state.bgm.track && state.bgm.track.name,
+             playing: state.bgm.playing, paused: state.bgm.paused,
+             pos: Math.round(state.bgm.pos * 10) / 10 },
+      sfx: sfxSlots.map(s => s && s.name),
+      sfxOpts: sfxOpts.map(o => ({ vol: Math.round(o.vol * 100), loop: o.loop, fade: o.fade })),
+      deckOpts: { loop: deckOpts.loop, fade: deckOpts.fade, restart: deckOpts.restart }
+    };
+  },
+  BGM_LIB: BGM_LIB,
+  SFX_LIB: SFX_LIB,
+  dropOn: function(id){ $(id).classList.add("drop"); }
+};
+})();
+</script>
+</body>
+</html>

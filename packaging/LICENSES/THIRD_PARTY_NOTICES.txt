@@ -1,0 +1,49 @@
+MusicBoard ships the following third-party components.
+
+--------------------------------------------------------------------
+stb_vorbis  (third_party/stb/stb_vorbis.c)
+--------------------------------------------------------------------
+Ogg Vorbis audio decoder, compiled into the executable.
+
+  This software is available under two licenses, choose whichever you prefer.
+
+  ALTERNATIVE A - MIT License
+  Copyright (c) 2017 Sean Barrett
+  Permission is hereby granted, free of charge, to any person obtaining a copy of
+  this software and associated documentation files (the "Software"), to deal in
+  the Software without restriction, including without limitation the rights to
+  use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+  of the Software, and to permit persons to whom the Software is furnished to do
+  so, subject to the following conditions:
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+  ALTERNATIVE B - Public Domain (www.unlicense.org)
+  This is free and unencumbered software released into the public domain.
+  Anyone is free to copy, modify, publish, use, compile, sell, or distribute
+  this software, either in source code form or as a compiled binary, for any
+  purpose, commercial or non-commercial, and by any means.
+
+--------------------------------------------------------------------
+Windows platform components
+--------------------------------------------------------------------
+The executable links only against operating-system components that ship with
+Windows: Direct3D 11, DXGI, DirectComposition, Direct2D, DirectWrite, Windows
+Imaging Component, XAudio2, Media Foundation, WinHTTP, CNG (bcrypt), Shell32,
+Ole32, User32, Gdi32, Kernel32, Dbgihelp and Psapi. No third-party runtime is
+bundled, and no Visual C++ redistributable is required (the C runtime is linked
+statically).
+
+--------------------------------------------------------------------
+No audio content is bundled
+--------------------------------------------------------------------
+The installer and the application contain no music or sound effects. You point
+the application at your own library folder; it reads those files and never
+copies or uploads them.
