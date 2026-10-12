@@ -100,6 +100,7 @@ function Get-RelativePosixPath {
 
 Assert-FileExists (Join-Path $buildDirectory 'musicboard.exe')
 Assert-FileExists (Join-Path $buildDirectory 'MusicBoardSetup.exe')
+Assert-FileExists (Join-Path $buildDirectory 'FullToolsUpdater.exe')
 
 $mainExe = Join-Path $buildDirectory 'musicboard.exe'
 $setupExe = Join-Path $buildDirectory 'MusicBoardSetup.exe'
@@ -155,6 +156,7 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot 'packaging/README.en.txt') -De
 
 Copy-Item -LiteralPath $mainExe -Destination (Join-Path $packageDirectory 'MusicBoard.exe')
 Copy-Item -LiteralPath $setupExe -Destination (Join-Path $packageDirectory 'MusicBoardSetup.exe')
+Copy-Item -LiteralPath (Join-Path $buildDirectory 'FullToolsUpdater.exe') -Destination (Join-Path $packageDirectory 'FullToolsUpdater.exe')
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'packaging\README.zh-CN.txt') `
     -Destination (Join-Path $packageDirectory 'README.zh-CN.txt')
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'packaging\THIRD_PARTY_NOTICES.txt') `

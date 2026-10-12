@@ -2,6 +2,7 @@
 #include "app/application.h"
 
 #include "app/app_output.h"
+#include "app/update_client.h"
 
 #include <shellapi.h>
 #include <shobjidl.h>
@@ -763,6 +764,12 @@ bool Application::handle_message(UINT message, WPARAM wparam, LPARAM lparam, LRE
                 case 20:
                     show_link_import();
                     break;
+                case 21: {
+                    std::string error;
+                    if (!fulltools_update_client::launch(L"MusicBoard", MUSICBOARD_PRODUCT_VERSION, false, error))
+                        set_status(tr("无法检查更新：", "Update check unavailable: ") + error);
+                    break;
+                }
                 case 1002:
                     product_.hotkeys.enabled = !product_.hotkeys.enabled;
                     save_settings();
@@ -847,6 +854,12 @@ bool Application::handle_message(UINT message, WPARAM wparam, LPARAM lparam, LRE
 void Application::on_frame() {
     pump_link_import();
     const auto layer_now = std::chrono::steady_clock::now();
+    if (!update_check_started_ && layer_now - started_at_ >= std::chrono::seconds(10)) {
+        update_check_started_ = true;
+        std::string error;
+        if (!fulltools_update_client::launch(L"MusicBoard", MUSICBOARD_PRODUCT_VERSION, true, error))
+            report(LogLevel::warning, "Update check", error);
+    }
     if (layer_now - last_layer_repair_ >= std::chrono::milliseconds(200)) {
         last_layer_repair_ = layer_now;
         Failure layer_failure;
@@ -3159,7 +3172,8 @@ bool Application::create_tray_menu(HMENU& menu, Failure& failure) {
     const UINT available = !loading_ && bgm.in_use ? MF_STRING : MF_STRING | MF_GRAYED;
     bool ok = add(menu, available, 10, bgm.paused ? tr(L"继续播放", L"Resume") : tr(L"暂停", L"Pause")) &&
         add(menu, available, 11, tr(L"中止播放", L"Stop playback")) &&
-        add(menu, MF_STRING, 20, tr(L"导入音乐链接…  Ctrl+U", L"Import music link…  Ctrl+U"));
+        add(menu, MF_STRING, 20, tr(L"导入音乐链接…  Ctrl+U", L"Import music link…  Ctrl+U")) &&
+        add(menu, MF_STRING, 21, tr(L"检查更新…", L"Check for updates…"));
     const HMENU recent = ::CreatePopupMenu();
     const HMENU shortcuts = ::CreatePopupMenu();
     if (!recent || !shortcuts) {
