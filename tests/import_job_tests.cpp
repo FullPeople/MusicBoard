@@ -124,6 +124,9 @@ int main() {
         };
 
         registry.check(has("--no-playlist"), "不带播放列表（用户点的是一个链接）");
+        registry.check(has("--ignore-config"), "用户下载器配置不改变音乐板的导入行为");
+        registry.check(has("before_dl:MUSICBOARD_SOURCE_DURATION=%(duration)s") && has("--no-simulate"),
+            "读取来源时长时仍实际下载");
         registry.check(has("--newline"), "按行输出进度（增量解析的前提）");
         registry.check(has("--progress"), "要进度输出");
         registry.check(has("--no-colors"), "进度行里不要终端转义序列");
@@ -155,7 +158,7 @@ int main() {
 
         // 启动之后暂存目录必须是空的 —— 下载还没开始写
         const bool saw_progress = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
 
         registry.check_eq(saw_progress, "作业在超时前结束", job.status().failure_reason);
@@ -193,7 +196,7 @@ int main() {
                     observed.push_back(fraction);
                     previous = fraction;
                 }
-                return job.status().state != ImportJobState::downloading;
+                return !job.is_running();
             },
             [&] { job.pump(); }, 20000);
 
@@ -217,13 +220,13 @@ int main() {
         registry.check(job.start(request, failure), "启动失败用例");
 
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended, "失败用例结束了（没有一直等）");
         registry.check(job.status().state == ImportJobState::failed, "状态是 failed");
-        registry.check(job.status().failure_reason.find("404") != std::string::npos,
+        registry.check(job.status().detail.find("404") != std::string::npos,
                        "失败原因里带上了 yt-dlp 的具体错误（含 404）");
-        registry.check(job.status().failure_reason.find("退出码 1") != std::string::npos,
+        registry.check(job.status().detail.find("exit 1") != std::string::npos,
                        "也带上了退出码");
         registry.check(!job.status().suggestion.empty(), "给出了可执行的建议");
         registry.check(std::filesystem::exists(job.status().staging_dir),
@@ -238,10 +241,10 @@ int main() {
         ImportJobRequest request = box.request(L"refusal", fake_child);
         registry.check(job.start(request, failure), "启动拒绝用例");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended && job.status().state == ImportJobState::failed, "被判为失败");
-        registry.check(job.status().failure_reason.find("403") != std::string::npos,
+        registry.check(job.status().detail.find("403") != std::string::npos,
                        "原因里有 403");
         registry.check(job.status().suggestion.find("拒绝") != std::string::npos,
                        "建议是对的（不是一条无关的提示）");
@@ -257,7 +260,7 @@ int main() {
         ImportJobRequest request = box.request(L"junk", fake_child);
         registry.check(job.start(request, failure), "启动伪装文件用例");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended, "伪装文件用例结束");
         registry.check(job.status().state == ImportJobState::failed,
@@ -279,7 +282,7 @@ int main() {
         ImportJobRequest request = box.request(L"empty", fake_child);
         registry.check(job.start(request, failure), "启动空产出用例");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended && job.status().state == ImportJobState::failed,
                        "报成功却什么都没产出 → 失败");
@@ -293,7 +296,7 @@ int main() {
         ImportJobRequest request = box.request(L"two_files", fake_child);
         registry.check(job.start(request, failure), "启动双产出用例");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended && job.status().state == ImportJobState::failed,
                        "产出两个文件 → 失败（不挑一个，挑一个就是猜）");
@@ -353,7 +356,7 @@ int main() {
         request.stall_timeout_seconds = 0.6;   // silent 模式 30 秒不打一个字
         registry.check(job.start(request, failure), "启动静默用例");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 20000);
         registry.check(ended, "静默用例在超时前收场（没有永远等下去）");
         registry.check(job.status().state == ImportJobState::failed, "状态是 failed");
@@ -398,7 +401,7 @@ int main() {
         request.target_category_dir = box.target;
         registry.check(job.start(request, failure), "连不上的直链也能启动（错误在下的时候才出现）");
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 25000);
         registry.check(ended && job.status().state == ImportJobState::failed,
                        "连不上主机 → 失败（而不是永远挂着）");
@@ -448,7 +451,7 @@ int main() {
         registry.check_invocation([&] { return job.start(request, failure); }, "直链作业启动成功", failure);
 
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 25000);
         registry.check_eq(ended, "直链作业在超时前结束", job.status().failure_reason);
         registry.check_eq(job.status().state == ImportJobState::done, "最终状态是 done",
@@ -496,7 +499,7 @@ int main() {
         registry.check(job.start(request, failure), "启动");
 
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 25000);
         registry.check_eq(ended && job.status().state == ImportJobState::done,
                           "无扩展名直链也能导入成功", job.status().failure_reason);
@@ -526,7 +529,7 @@ int main() {
         registry.check(job.start(request, failure), "启动");
 
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 25000);
         registry.check(ended && job.status().state == ImportJobState::failed,
                        "下回来的东西不是音频 → 失败");
@@ -561,7 +564,7 @@ int main() {
         registry.check(job.start(request, failure), "启动");
 
         const bool ended = wait_until(
-            [&] { return job.status().state != ImportJobState::downloading; },
+            [&] { return !job.is_running(); },
             [&] { job.pump(); }, 25000);
         registry.check(ended && job.status().state == ImportJobState::failed, "404 → 失败");
         registry.check(job.status().failure_reason.find("404") != std::string::npos,
@@ -681,5 +684,62 @@ int main() {
         }
     }
 
+    {
+        Sandbox box;
+        LoopbackResponse response;
+        response.body = musicboard::test::make_wav_bytes(31000);
+        response.extra_headers = "Content-Type: audio/wav\r\n";
+        LoopbackHttpServer server;
+        registry.check(server.start(response, "/long-track.wav"), "启动长曲本地下载服务器");
+        ImportJobRequest request;
+        request.url = server.url();
+        request.kind = ImportSourceKind::direct_http;
+        request.staging_root = box.staging;
+        request.target_category_dir = box.target;
+        request.prepare_playback = true;
+        ImportJob job;
+        Failure failure;
+        registry.check_invocation([&] { return job.start(request, failure); }, "启动长曲下载与播放准备", failure);
+        const bool ended = wait_until([&] {
+            return !job.is_running();
+        }, [&] { job.pump(); }, 20000);
+        registry.check_eq(ended && job.status().state == ImportJobState::done, "长曲下载与后台准备完成",
+            job.status().failure_reason + job.preparation_failure().to_string());
+        const auto& prepared = job.prepared_audio();
+        registry.check(prepared && !prepared->complete, "长曲采用连续供音，不保留整首 PCM");
+        registry.check(prepared && prepared->head.duration_seconds <= 2.05 && prepared->duration() >= 30.9,
+            "只保留两秒起播段并保留完整时长");
+        registry.check(prepared && prepared->path == job.result().installed_path,
+            "连续供音读取最终离线文件");
+    }
+    {
+        Sandbox box;
+        LoopbackResponse response;
+        response.body = musicboard::test::make_wav_bytes(31000);
+        LoopbackHttpServer server;
+        registry.check(server.start(response, "/cancel-publication.wav"), "启动入库取消测试服务器");
+        ImportJobRequest request;
+        request.url = server.url();
+        request.kind = ImportSourceKind::direct_http;
+        request.staging_root = box.staging;
+        request.target_category_dir = box.target;
+        request.prepare_playback = true;
+        ImportJob job;
+        Failure failure;
+        registry.check_invocation([&] { return job.start(request, failure); }, "启动后台入库取消用例", failure);
+        const bool reached = wait_until([&] {
+            return job.status().state == ImportJobState::publishing;
+        }, [&] { job.pump(); }, 10000);
+        registry.check(reached, "实际进入后台发布状态");
+        const auto began = GetTickCount64();
+        job.cancel();
+        registry.check(GetTickCount64() - began < 50, "取消请求立即返回，不等待工作线程");
+        const bool ended = wait_until([&] { return !job.is_running(); }, [&] { job.pump(); }, 10000);
+        registry.check(ended, "取消后后台任务完成收尾");
+        const bool unpublished = job.status().state == ImportJobState::cancelled && files_in(box.target).empty();
+        const bool committed = job.status().state == ImportJobState::done &&
+            job.status().playback_preparation_cancelled && std::filesystem::is_regular_file(job.result().installed_path);
+        registry.check(unpublished || committed, "发布前取消不留曲目，已提交时保留有效文件且禁止自动播放");
+    }
     return registry.finish("import_job_tests");
 }

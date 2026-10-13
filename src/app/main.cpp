@@ -177,7 +177,7 @@ int wmain(int argc, wchar_t** argv) {
         return 0;
     }
     if (print_version) {
-        report_line_fmt(tr("音乐板 0.2.0\n", "MusicBoard 0.2.0\n"));
+        report_line_fmt(tr("音乐板 %s\n", "MusicBoard %s\n"), MUSICBOARD_PRODUCT_VERSION);
         return 0;
     }
 

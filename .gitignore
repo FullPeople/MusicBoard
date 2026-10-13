@@ -1,7 +1,9 @@
 # 构建产物
 /build/
+/.cache/
 /out/
 /dist/
+/artifacts/
 
 # 日志不入库
 /logs/

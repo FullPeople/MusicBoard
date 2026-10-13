@@ -8,6 +8,7 @@
 #include <deque>
 #include <chrono>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,8 @@
 #include "core/product_settings.h"
 #include "library/library_scanner.h"
 #include "library/library_loader.h"
+#include "library/import_job.h"
+#include "platform/link_import_window.h"
 #include "platform/composition_window.h"
 #include "platform/global_hotkeys.h"
 #include "platform/orb_window.h"
@@ -146,6 +149,9 @@ private:
     void on_char(wchar_t character);
     void on_key_down(UINT virtual_key);
     void on_drop_files(HDROP drop);
+    void show_link_import();
+    [[nodiscard]] bool start_link_import(const LinkImportInput& input, Failure& failure);
+    void pump_link_import();
 
     // ---- 播放 ----
     void ensure_envelope(std::size_t index);
@@ -272,6 +278,11 @@ private:
     Column bgm_;                           // 音乐列
     Column sfx_;                           // 音效列
     std::filesystem::path library_root_;
+    LinkImportWindow link_import_window_;
+    std::unique_ptr<ImportJob> link_import_job_;
+    LinkImportInput link_import_input_;
+    bool link_import_active_ = false;
+    std::string link_import_status_;
     std::filesystem::path settings_path_;
 
     LibraryLoader loader_;
@@ -371,6 +382,7 @@ private:
     // 上一次画出去的进度（用来判断"进度变了没"，避免每帧都重画整块）
     double last_drawn_progress_ = -1.0;
     std::chrono::steady_clock::time_point started_at_{};
+    bool update_check_started_ = false;
 
     // 动效状态
     std::vector<float> bgm_hover_amounts_;
@@ -379,6 +391,7 @@ private:
     std::vector<float> sfx_chip_amounts_;
     std::chrono::steady_clock::time_point last_frame_stamp_{};
     bool have_last_frame_stamp_ = false;
+    std::chrono::steady_clock::time_point last_layer_repair_{};
     // 显隐动效：起点时刻 + 方向。收起到 0 之后才真的把窗口藏起来 ——
     // 否则"收进通知区域"会变成瞬间消失（原型里是淡出 + 缩小）。
     std::chrono::steady_clock::time_point reveal_stamp_{};

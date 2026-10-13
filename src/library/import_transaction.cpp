@@ -1,6 +1,11 @@
 #include "library/import_transaction.h"
 
 #include <system_error>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <objbase.h>
+#include "core/localization.h"
+#include "library/url_classify.h"
 
 #include "audio/decoder.h"
 #include "library/library_ops.h"
@@ -8,6 +13,48 @@
 
 namespace musicboard {
 namespace {
+
+bool is_cancelled(const ImportRequest& request) noexcept {
+    return request.cancelled && request.cancelled->load();
+}
+
+DWORD CALLBACK copy_progress(LARGE_INTEGER total, LARGE_INTEGER copied, LARGE_INTEGER,
+                             LARGE_INTEGER, DWORD, DWORD, HANDLE, HANDLE, LPVOID context) {
+    const auto& request = *static_cast<const ImportRequest*>(context);
+    if (is_cancelled(request)) return PROGRESS_CANCEL;
+    if (request.copy_progress) request.copy_progress(static_cast<std::uint64_t>(copied.QuadPart),
+                                                     static_cast<std::uint64_t>(total.QuadPart));
+    return is_cancelled(request) ? PROGRESS_CANCEL : PROGRESS_CONTINUE;
+}
+
+[[nodiscard]] bool reserve_copy_file(const std::filesystem::path& directory,
+                                     std::filesystem::path& path, Failure& failure) {
+    GUID id{};
+    const HRESULT status = CoCreateGuid(&id);
+    wchar_t text[40]{};
+    if (FAILED(status) || StringFromGUID2(id, text, 40) == 0) {
+        failure.set(fail_code::platform_api_failed, "Create import temporary name HRESULT=" + std::to_string(status));
+        return false;
+    }
+    path = directory / (std::wstring(L".musicboard-import-") + text + L".tmp");
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        failure.set(fail_code::file_open_failed, "Reserve import temporary file Win32=" +
+                    std::to_string(GetLastError()) + ": " + path_to_utf8(path));
+        return false;
+    }
+    CloseHandle(file);
+    return true;
+}
+
+void remove_owned_copy(const std::filesystem::path& path, Failure& failure) {
+    if (!DeleteFileW(path.c_str())) {
+        const DWORD error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND) failure.context += "; temporary cleanup Win32=" +
+            std::to_string(error) + ": " + path_to_utf8(path);
+    }
+}
 
 [[nodiscard]] bool path_is_symlink(const std::filesystem::path& path) {
     std::error_code ec;
@@ -63,6 +110,10 @@ namespace {
 
 bool import_staged_file(const ImportRequest& request, ImportResult& result, Failure& failure) {
     result = ImportResult{};
+    if (is_cancelled(request)) {
+        failure.set(fail_code::cancelled, tr("已取消入库。", "Library import cancelled."));
+        return false;
+    }
 
     // ---- 1. 校验来源 ----
     if (!validate_source(request, failure)) {
@@ -90,6 +141,8 @@ bool import_staged_file(const ImportRequest& request, ImportResult& result, Fail
     // ---- 3. 定名与定址 ----
     std::string stem = request.preferred_stem.empty() ? path_to_utf8(request.staged_file.stem())
                                                       : request.preferred_stem;
+    const bool incomplete = downloaded_audio_is_incomplete(request.source_duration_seconds, staged_duration);
+    if (incomplete) stem += tr(" (试听片段)", " (preview)");
     stem = sanitize_to_valid_name(stem);
     // 净化之后还要过一遍严格校验：净化只保证"能用"，不保证"符合我们的规则"
     if (!validate_file_stem(stem, failure)) {
@@ -123,29 +176,44 @@ bool import_staged_file(const ImportRequest& request, ImportResult& result, Fail
     result.renamed_to_avoid_collision = wanted.empty() || target != wanted;
 
     // ---- 4. 原子发布 ----
-    std::filesystem::rename(request.staged_file, target, ec);
-    if (ec) {
-        // 跨盘（暂存区与曲库不在同一个卷）时 rename 会失败，退回复制 + 校验 + 删源
-        ec.clear();
-        std::filesystem::copy_file(request.staged_file, target, std::filesystem::copy_options::none, ec);
-        if (ec) {
-            failure.set(fail_code::file_open_failed,
-                        "发布失败（同盘重命名与跨盘复制都失败）→ " + path_to_utf8(target) + ": " +
-                            ec.message());
+    if (is_cancelled(request)) {
+        failure.set(fail_code::cancelled, tr("已取消入库。", "Library import cancelled."));
+        return false;
+    }
+    bool copied = false;
+    if (!MoveFileExW(request.staged_file.c_str(), target.c_str(), 0)) {
+        const DWORD move_error = GetLastError();
+        if (move_error != ERROR_NOT_SAME_DEVICE) {
+            failure.set(fail_code::file_open_failed, "Publish import Win32=" +
+                std::to_string(move_error) + ": " + path_to_utf8(target));
             return false;
         }
-
+        std::filesystem::path temporary;
+        if (!reserve_copy_file(request.target_category_dir, temporary, failure)) return false;
+        if (!CopyFileExW(request.staged_file.c_str(), temporary.c_str(), copy_progress,
+                         const_cast<ImportRequest*>(&request), nullptr, 0)) {
+            const DWORD copy_error = GetLastError();
+            failure.set(copy_error == ERROR_REQUEST_ABORTED ? fail_code::cancelled : fail_code::file_open_failed,
+                "Copy import Win32=" + std::to_string(copy_error) + ": " + path_to_utf8(target));
+            remove_owned_copy(temporary, failure);
+            return false;
+        }
         const auto source_size = std::filesystem::file_size(request.staged_file, ec);
-        const auto published_size = ec ? 0 : std::filesystem::file_size(target, ec);
-        if (ec || source_size != published_size) {
-            std::error_code cleanup_ec;
-            std::filesystem::remove(target, cleanup_ec);
-            failure.set(fail_code::file_read_failed,
-                        "发布失败：复制后大小不一致（源 " + std::to_string(source_size) + " 目标 " +
-                            std::to_string(published_size) + "），已删除半成品");
+        const auto copied_size = ec ? 0 : std::filesystem::file_size(temporary, ec);
+        if (ec || source_size != copied_size || is_cancelled(request)) {
+            failure.set(is_cancelled(request) ? fail_code::cancelled : fail_code::file_read_failed,
+                "Import copy not published: source=" + std::to_string(source_size) +
+                " copy=" + std::to_string(copied_size));
+            remove_owned_copy(temporary, failure);
             return false;
         }
-        std::filesystem::remove(request.staged_file, ec);
+        if (!MoveFileExW(temporary.c_str(), target.c_str(), 0)) {
+            failure.set(fail_code::file_open_failed, "Publish copied import Win32=" +
+                        std::to_string(GetLastError()) + ": " + path_to_utf8(target));
+            remove_owned_copy(temporary, failure);
+            return false;
+        }
+        copied = true;
     }
 
     // ---- 5. 发布后再校验一次 ----
@@ -155,16 +223,21 @@ bool import_staged_file(const ImportRequest& request, ImportResult& result, Fail
     Failure verify_failure;
     if (!validate_content(target, published_duration, verify_failure)) {
         std::error_code cleanup_ec;
-        std::filesystem::remove(target, cleanup_ec);
+        if (copied) std::filesystem::remove(target, cleanup_ec);
+        else std::filesystem::rename(target, request.staged_file, cleanup_ec);
         failure.set(fail_code::decode_failed,
-                    "发布后的文件校验失败，已回滚（删除）：" + path_to_utf8(target) + " —— " +
-                        verify_failure.to_string());
+                    "发布后的文件校验失败：" + path_to_utf8(target) + " —— " +
+                        verify_failure.to_string() + (cleanup_ec ? "；撤回失败：" + cleanup_ec.message() : "；已撤回发布。"));
         return false;
     }
 
     result.installed_path = target;
     result.final_stem = path_to_utf8(target.stem());
     result.duration_seconds = published_duration;
+    result.content_incomplete = incomplete;
+    if (copied && !DeleteFileW(request.staged_file.c_str()))
+        result.cleanup_warning = "Imported audio is valid; staged source retained. Win32=" +
+            std::to_string(GetLastError()) + ": " + path_to_utf8(request.staged_file);
     return true;
 }
 

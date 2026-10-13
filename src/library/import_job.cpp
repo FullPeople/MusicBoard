@@ -4,12 +4,15 @@
 #include <windows.h>
 
 #include <array>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <system_error>
 
 #include "audio/container_probe.h"
 #include "audio/decoder.h"
 #include "core/path_utf8.h"
+#include "core/localization.h"
 #include "library/library_ops.h"
 #include "library/staging.h"
 
@@ -80,6 +83,10 @@ const char* import_job_state_name(ImportJobState state) noexcept {
             return "idle";
         case ImportJobState::downloading:
             return "downloading";
+        case ImportJobState::publishing:
+            return "publishing";
+        case ImportJobState::preparing:
+            return "preparing";
         case ImportJobState::done:
             return "done";
         case ImportJobState::failed:
@@ -97,6 +104,7 @@ bool resolve_yt_dlp(std::filesystem::path& out, Failure& failure) {
     // 便携版最可能的位置：跟本程序放在一起
     const std::string beside = directory_of_current_executable();
     if (!beside.empty()) {
+        candidates.push_back(path_of_utf8(beside) / L"media-tools" / L"yt-dlp.exe");
         candidates.push_back(path_of_utf8(beside) / L"yt-dlp.exe");
     }
     const std::string profile = environment_utf8(L"USERPROFILE");
@@ -151,6 +159,14 @@ std::vector<std::string> build_yt_dlp_arguments(const std::string& url,
         path_to_utf8(job_dir / L"%(title)s.%(ext)s");
 
     std::vector<std::string> arguments{
+        "--ignore-config",
+        "--no-plugin-dirs",
+        "--socket-timeout", "15",
+        "--retries", "2",
+        "--fragment-retries", "2",
+        "--print", "before_dl:MUSICBOARD_SOURCE_DURATION=%(duration)s",
+        "--no-simulate",
+        "--no-quiet",
         // 不要整张专辑：用户点的是一个链接，不是一份播放列表
         "--no-playlist",
         // 进度按行输出，便于增量解析
@@ -172,6 +188,7 @@ std::vector<std::string> build_yt_dlp_arguments(const std::string& url,
 ImportJob::~ImportJob() {
     // 还在跑就杀掉整棵进程树
     cancel();
+    if (preparation_worker_.joinable()) preparation_worker_.join();
     // keep_staging_ 为 true 表示"这次留下了证据"（失败），不动它。
     // 为 false 表示这次本该是干净的（成功/取消），再补一次清理尝试。
     if (!keep_staging_ && !status_.staging_dir.empty()) {
@@ -187,6 +204,7 @@ bool ImportJob::start(const ImportJobRequest& request, Failure& failure) {
     }
 
     request_ = request;
+    request_.url = normalize_import_url(request_.url);
     status_ = ImportJobStatus{};
 
     if (!url_is_well_formed(request_.url)) {
@@ -260,6 +278,16 @@ bool ImportJob::start(const ImportJobRequest& request, Failure& failure) {
     }
 
     yt_dlp_arguments_ = build_yt_dlp_arguments(request_.url, status_.staging_dir);
+    const std::filesystem::path media_directory = yt_dlp.parent_path();
+    std::error_code media_error;
+    if (std::filesystem::is_directory(media_directory / L"plugins", media_error)) {
+        yt_dlp_arguments_.insert(yt_dlp_arguments_.end() - 1, "--plugin-dirs");
+        yt_dlp_arguments_.insert(yt_dlp_arguments_.end() - 1, path_to_utf8(media_directory / L"plugins"));
+    }
+    if (std::filesystem::is_regular_file(media_directory / L"ffmpeg.exe", media_error)) {
+        yt_dlp_arguments_.insert(yt_dlp_arguments_.end() - 1, "--ffmpeg-location");
+        yt_dlp_arguments_.insert(yt_dlp_arguments_.end() - 1, path_to_utf8(media_directory));
+    }
 
     ProcessRunOptions run_options;
     run_options.executable = yt_dlp;
@@ -278,6 +306,24 @@ bool ImportJob::start(const ImportJobRequest& request, Failure& failure) {
 }
 
 void ImportJob::pump() {
+    if (status_.state == ImportJobState::publishing || status_.state == ImportJobState::preparing) {
+        if (!preparation_ready_.load(std::memory_order_acquire)) {
+            if (preparation_cancelled_.load()) status_.status_text = tr("正在取消入库或播放准备…", "Cancelling import or playback preparation…");
+            else if (publication_phase_.load() == ImportJobState::preparing) {
+                status_.state = ImportJobState::preparing;
+                status_.status_text = tr("已下载，正在准备播放…", "Downloaded; preparing playback…");
+            } else if (const auto total = publication_total_.load(); total > 0) {
+                status_.status_text = tr("正在保存到曲库 ", "Saving to library ") +
+                    std::to_string(publication_copied_.load() * 100 / total) + "%";
+            }
+            return;
+        }
+        preparation_worker_.join();
+        status_ = std::move(publication_status_);
+        if (status_.state == ImportJobState::done && preparation_cancelled_.load())
+            status_.playback_preparation_cancelled = true;
+        return;
+    }
     if (status_.state != ImportJobState::downloading) {
         return;
     }
@@ -329,14 +375,6 @@ void ImportJob::pump() {
         // 下完了：先按真实容器改名，再入库
         status_.fraction = 1.0;
         status_.status_text = "正在入库…";
-        Failure rename_failure;
-        if (!rename_staged_by_real_container(rename_failure)) {
-            status_.state = ImportJobState::failed;
-            status_.failure_reason = "下载完成但内容不是可解码的音频：" + rename_failure.to_string();
-            status_.suggestion = "这个链接指的可能是一个网页（比如登录页或播放器页面），"
-                                 "而不是音频文件本身。";
-            return;
-        }
         publish_from_staging();
         return;
     }
@@ -349,6 +387,7 @@ void ImportJob::pump() {
         if (text.empty()) {
             continue;
         }
+        if (parse_yt_dlp_duration_line(text, status_.source_duration_seconds)) continue;
         double fraction = 0.0;
         if (parse_yt_dlp_progress_line(text, fraction)) {
             // 进度只许往前走。yt-dlp 在合并/转码阶段会重新从 0 开始报，
@@ -398,8 +437,8 @@ void ImportJob::pump() {
         if (reason.empty()) {
             reason = "yt-dlp 没有给出可识别的错误信息";
         }
-        status_.failure_reason =
-            "下载失败（yt-dlp 退出码 " + std::to_string(exit_code) + "）：" + reason;
+        status_.detail = "Downloader exit " + std::to_string(exit_code) + ": " + reason;
+        status_.failure_reason = summarize_yt_dlp_failure(output);
         status_.suggestion = suggest_yt_dlp_fix(output);
         return;
     }
@@ -489,18 +528,38 @@ bool ImportJob::rename_staged_by_real_container(Failure& failure) {
 }
 
 void ImportJob::publish_from_staging() {
+    publication_status_ = status_;
+    status_.state = ImportJobState::publishing;
+    status_.status_text = tr("正在保存到曲库…", "Saving to library…");
+    preparation_worker_ = std::thread([this] {
+        run_publication();
+        preparation_ready_.store(true, std::memory_order_release);
+    });
+}
+
+void ImportJob::run_publication() {
+    auto& status = publication_status_;
+    if (using_http_download_) {
+        Failure rename_failure;
+        if (!rename_staged_by_real_container(rename_failure)) {
+            status.state = ImportJobState::failed;
+            status.failure_reason = "下载完成但内容不是可解码的音频：" + rename_failure.to_string();
+            status.suggestion = "这个链接指的可能是一个网页，而不是音频文件本身。";
+            return;
+        }
+    }
     std::vector<std::filesystem::path> staged;
     Failure failure;
-    if (!list_staged_files(status_.staging_dir, staged, failure)) {
-        status_.state = ImportJobState::failed;
-        status_.failure_reason = failure.context;
+    if (!list_staged_files(status.staging_dir, staged, failure)) {
+        status.state = ImportJobState::failed;
+        status.failure_reason = failure.context;
         return;
     }
 
     if (staged.empty()) {
         // yt-dlp 报成功却什么都没产出 —— 说清楚，不假装成功
-        status_.state = ImportJobState::failed;
-        status_.failure_reason =
+        status.state = ImportJobState::failed;
+        status.failure_reason =
             "yt-dlp 报告成功，但暂存目录里没有任何文件。它可能只找到了元数据但没有可下载的音频流。";
         return;
     }
@@ -511,8 +570,8 @@ void ImportJob::publish_from_staging() {
         for (const auto& path : staged) {
             names += "\n  " + path_to_utf8(path.filename());
         }
-        status_.state = ImportJobState::failed;
-        status_.failure_reason =
+        status.state = ImportJobState::failed;
+        status.failure_reason =
             "暂存目录里出现了 " + std::to_string(staged.size()) +
             " 个文件，无法确定该导入哪一个（期望 1 个）：" + names;
         return;
@@ -520,7 +579,7 @@ void ImportJob::publish_from_staging() {
 
     ImportRequest import_request;
     import_request.staged_file = staged.front();
-    import_request.staging_root = status_.staging_dir;
+    import_request.staging_root = status.staging_dir;
     import_request.target_category_dir = request_.target_category_dir;
     // 只把**用户明确给过的**名字传下去。
     //
@@ -530,26 +589,64 @@ void ImportJob::publish_from_staging() {
     // yt-dlp 路线同理：暂存文件的名字就是视频标题，那才是该用的。
     import_request.preferred_stem =
         preferred_stem_from_user_ ? request_.preferred_stem : std::string{};
+    import_request.source_duration_seconds = status.source_duration_seconds;
+    import_request.cancelled = &preparation_cancelled_;
+    import_request.copy_progress = [this](std::uint64_t copied, std::uint64_t total) {
+        publication_total_.store(total);
+        publication_copied_.store(copied);
+    };
 
     Failure import_failure;
     if (!import_staged_file(import_request, result_, import_failure)) {
-        status_.state = ImportJobState::failed;
-        status_.failure_reason = "入库失败：" + import_failure.to_string();
+        if (import_failure.code == fail_code::cancelled) {
+            status.state = ImportJobState::cancelled;
+            status.status_text = tr("已取消入库。", "Library import cancelled.");
+            keep_staging_ = false;
+            Failure cleanup;
+            if (!remove_staging_job_dir(status.staging_dir, cleanup)) status.detail = cleanup.to_string();
+            return;
+        }
+        status.state = ImportJobState::failed;
+        status.failure_reason = "入库失败：" + import_failure.to_string();
         // 暂存目录留着 —— 文件还在，用户可以自己去拿
         return;
     }
 
-    status_.state = ImportJobState::done;
-    status_.fraction = 1.0;
-    status_.status_text = "已导入：" + result_.final_stem;
+    status.state = ImportJobState::done;
+    status.fraction = 1.0;
+    status.status_text = "已导入：" + result_.final_stem;
+    if (result_.content_incomplete) {
+        std::ostringstream warning;
+        warning << std::fixed << std::setprecision(0)
+            << tr("来源标注 ", "The source states ") << status.source_duration_seconds
+            << tr(" 秒，但只取得 ", " seconds, but only ") << result_.duration_seconds
+            << tr(" 秒。可能仅提供试听片段。", " seconds were received. This may be a preview.");
+        status.content_warning = warning.str();
+        status.status_text += "；" + status.content_warning;
+    }
     keep_staging_ = false;
     // 文件已经被事务搬进曲库，这个目录现在是空的（或只剩 .part 残片）。
     // 清不掉也不报错：next 启动时的 prune_staging 会把旧目录收走。
     Failure ignored;
-    static_cast<void>(remove_staging_job_dir(status_.staging_dir, ignored));
+    static_cast<void>(remove_staging_job_dir(status.staging_dir, ignored));
+    if (request_.prepare_playback && !preparation_cancelled_.load()) {
+        publication_phase_.store(ImportJobState::preparing);
+        preparation_started_ = std::chrono::steady_clock::now();
+        if (probe_audio_file(result_.installed_path, playback_info_, preparation_failure_))
+            static_cast<void>(prepare_audio(result_.installed_path, playback_info_, prepared_audio_,
+                preparation_failure_, &preparation_cancelled_, {}));
+        status.playback_preparation_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - preparation_started_).count();
+    }
+    status.playback_preparation_cancelled = preparation_cancelled_.load();
 }
 
 void ImportJob::cancel() {
+    if (status_.state == ImportJobState::publishing || status_.state == ImportJobState::preparing) {
+        preparation_cancelled_.store(true);
+        status_.status_text = tr("正在取消入库或播放准备…", "Cancelling import or playback preparation…");
+        return;
+    }
     if (status_.state != ImportJobState::downloading) {
         return;
     }
