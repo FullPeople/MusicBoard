@@ -25,6 +25,36 @@ bool pipe(Handle& read,Handle& write,Failure& failure){
         failure.set("online.pipe","Pipe Win32="+std::to_string(GetLastError()));return false;
     }return true;
 }
+bool launch(const std::filesystem::path& executable,std::wstring command,HANDLE input,HANDLE output,HANDLE errors,
+    HANDLE job,Handle& process,Handle& thread,Failure& failure){
+    SIZE_T bytes=0;InitializeProcThreadAttributeList(nullptr,1,0,&bytes);
+    std::vector<unsigned char> storage(bytes);
+    auto* attributes=reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
+    if(!InitializeProcThreadAttributeList(attributes,1,0,&bytes)){
+        failure.set("online.start","Process attribute initialization Win32="+std::to_string(GetLastError()));return false;
+    }
+    struct Cleanup{LPPROC_THREAD_ATTRIBUTE_LIST value;~Cleanup(){DeleteProcThreadAttributeList(value);}} cleanup{attributes};
+    std::array<HANDLE,3> handles{input,output,errors};
+    for(HANDLE handle:handles)if(!SetHandleInformation(handle,HANDLE_FLAG_INHERIT,HANDLE_FLAG_INHERIT)){
+        failure.set("online.start","Process pipe inheritance Win32="+std::to_string(GetLastError()));return false;
+    }
+    if(!UpdateProcThreadAttribute(attributes,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,handles.data(),sizeof(handles),nullptr,nullptr)){
+        failure.set("online.start","Process pipe isolation Win32="+std::to_string(GetLastError()));return false;
+    }
+    STARTUPINFOEXW startup{};startup.StartupInfo.cb=sizeof(startup);startup.StartupInfo.dwFlags=STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput=input;startup.StartupInfo.hStdOutput=output;startup.StartupInfo.hStdError=errors;
+    startup.lpAttributeList=attributes;PROCESS_INFORMATION info{};
+    if(!CreateProcessW(executable.c_str(),command.data(),nullptr,nullptr,TRUE,
+        EXTENDED_STARTUPINFO_PRESENT|CREATE_NO_WINDOW|CREATE_SUSPENDED,nullptr,nullptr,&startup.StartupInfo,&info)){
+        failure.set("online.start","Media process start Win32="+std::to_string(GetLastError()));return false;
+    }
+    process.value=info.hProcess;thread.value=info.hThread;
+    if(!AssignProcessToJobObject(job,process.value)||ResumeThread(thread.value)==DWORD(-1)){
+        const DWORD code=GetLastError();TerminateProcess(process.value,1);WaitForSingleObject(process.value,5000);
+        failure.set("online.start","Contained media process start Win32="+std::to_string(code));return false;
+    }
+    return true;
+}
 }
 bool read_online_chunks(const OnlineAudioSource& source,AudioChunkConsumer& consumer,Failure& failure,
     const std::atomic<bool>* cancelled,double from){
@@ -36,40 +66,61 @@ bool read_online_chunks(const OnlineAudioSource& source,AudioChunkConsumer& cons
     std::error_code ec;if(!std::filesystem::is_regular_file(source.decoder,ec)){
         failure.set("online.decoder","Decoder missing: "+path_to_utf8(source.decoder));return false;
     }
-    std::vector<std::string> arguments={"-nostdin","-hide_banner","-loglevel","error","-rw_timeout","15000000",
-        "-reconnect","1","-reconnect_streamed","1","-reconnect_delay_max","3","-protocol_whitelist","http,https,httpproxy,tcp,tls,crypto"};
-    if(!source.headers.empty()){arguments.push_back("-headers");arguments.push_back(source.headers);}
-    arguments.insert(arguments.end(),{"-i",source.url});
+    const bool relayed=!source.resolver.empty();
+    if(relayed&&(!std::filesystem::is_regular_file(source.resolver,ec)||source.resolver_arguments.empty())){
+        failure.set("online.resolver","Platform transfer tool is unavailable");return false;
+    }
+    std::vector<std::string> arguments={"-nostdin","-hide_banner","-loglevel","error"};
+    if(relayed)arguments.insert(arguments.end(),{"-protocol_whitelist","pipe","-i","pipe:0"});
+    else{
+        arguments.insert(arguments.end(),{"-rw_timeout","15000000","-reconnect","1","-reconnect_streamed","1",
+            "-reconnect_delay_max","3","-protocol_whitelist","http,https,httpproxy,tcp,tls,crypto"});
+        if(!source.headers.empty()){arguments.push_back("-headers");arguments.push_back(source.headers);}
+        arguments.insert(arguments.end(),{"-i",source.url});
+    }
     if(from>0){arguments.push_back("-ss");arguments.push_back(std::to_string(from));}
     arguments.insert(arguments.end(),{"-vn","-sn","-dn","-ac","2","-ar","48000","-f","s16le","pipe:1"});
     std::wstring command=quote(source.decoder.wstring());
     for(const auto& arg:arguments){std::wstring wide;if(!utf8_to_wide(arg,wide,failure))return false;command+=L" "+quote(wide);}
     Handle pcmRead,pcmWrite,errorRead,errorWrite,job,process,thread;
+    Handle mediaRead,mediaWrite,resolverErrorRead,resolverErrorWrite,resolverProcess,resolverThread,nullInput;
     if(!pipe(pcmRead,pcmWrite,failure)||!pipe(errorRead,errorWrite,failure))return false;
     job.value=CreateJobObjectW(nullptr,nullptr);JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
     limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if(!job.value||!SetInformationJobObject(job.value,JobObjectExtendedLimitInformation,&limits,sizeof(limits))){
         failure.set("online.job","Job isolation Win32="+std::to_string(GetLastError()));return false;
     }
-    STARTUPINFOW startup{};startup.cb=sizeof(startup);startup.dwFlags=STARTF_USESTDHANDLES;
-    startup.hStdOutput=pcmWrite.value;startup.hStdError=errorWrite.value;
-    PROCESS_INFORMATION info{};
-    if(!CreateProcessW(source.decoder.c_str(),command.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW|CREATE_SUSPENDED,
-        nullptr,nullptr,&startup,&info)){
-        failure.set("online.start","Decoder start Win32="+std::to_string(GetLastError()));return false;
-    }
-    process.value=info.hProcess;thread.value=info.hThread;
-    if(!AssignProcessToJobObject(job.value,process.value)||ResumeThread(thread.value)==DWORD(-1)){
-        const DWORD code=GetLastError();TerminateProcess(process.value,1);
-        failure.set("online.start","Contained decoder start Win32="+std::to_string(code));return false;
+    SECURITY_ATTRIBUTES inputSecurity{sizeof(inputSecurity),nullptr,TRUE};
+    nullInput.value=CreateFileW(L"NUL",GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,&inputSecurity,OPEN_EXISTING,0,nullptr);
+    if(nullInput.value==INVALID_HANDLE_VALUE){failure.set("online.start","Null input Win32="+std::to_string(GetLastError()));return false;}
+    if(relayed&&(!pipe(mediaRead,mediaWrite,failure)||!pipe(resolverErrorRead,resolverErrorWrite,failure)))return false;
+    if(!launch(source.decoder,command,relayed?mediaRead.value:nullInput.value,pcmWrite.value,errorWrite.value,
+        job.value,process,thread,failure))return false;
+    if(relayed){
+        std::wstring resolverCommand=quote(source.resolver.wstring());
+        for(const auto& argument:source.resolver_arguments){std::wstring wide;if(!utf8_to_wide(argument,wide,failure))return false;resolverCommand+=L" "+quote(wide);}
+        if(!launch(source.resolver,resolverCommand,nullInput.value,mediaWrite.value,resolverErrorWrite.value,
+            job.value,resolverProcess,resolverThread,failure))return false;
+        CloseHandle(mediaRead.value);mediaRead.value=nullptr;CloseHandle(mediaWrite.value);mediaWrite.value=nullptr;
+        CloseHandle(resolverErrorWrite.value);resolverErrorWrite.value=nullptr;
     }
     CloseHandle(pcmWrite.value);pcmWrite.value=nullptr;CloseHandle(errorWrite.value);errorWrite.value=nullptr;
+    const auto stopOwned=[&](UINT code){
+        TerminateJobObject(job.value,code);WaitForSingleObject(process.value,5000);
+        if(relayed)WaitForSingleObject(resolverProcess.value,5000);
+    };
     std::array<std::int16_t,8192> samples{};size_t pending=0;std::string errors;bool any=false;
     auto last=std::chrono::steady_clock::now();uint64_t decoded_frames=0;
     for(;;){
-        if(cancelled&&cancelled->load()){TerminateJobObject(job.value,1);WaitForSingleObject(process.value,5000);failure.set("audio.cancelled","Online playback cancelled");return false;}
-        if(consumer.finished()){TerminateJobObject(job.value,0);WaitForSingleObject(process.value,5000);return true;}
+        if(cancelled&&cancelled->load()){stopOwned(1);failure.set("audio.cancelled","Online playback cancelled");return false;}
+        if(consumer.finished()){stopOwned(0);return true;}
         DWORD available=0;
+        if(relayed&&PeekNamedPipe(resolverErrorRead.value,nullptr,0,nullptr,&available,nullptr)&&available){
+            std::array<char,4096> bytes{};DWORD count=0;
+            if(ReadFile(resolverErrorRead.value,bytes.data(),std::min<DWORD>(available,static_cast<DWORD>(bytes.size())),&count,nullptr))
+                errors.append(bytes.data(),std::min<size_t>(count,16384-errors.size()));
+        }
+        available=0;
         if(PeekNamedPipe(errorRead.value,nullptr,0,nullptr,&available,nullptr)&&available){
             std::array<char,4096> bytes{};DWORD count=0;
             if(ReadFile(errorRead.value,bytes.data(),std::min<DWORD>(available,static_cast<DWORD>(bytes.size())),&count,nullptr))
@@ -92,13 +143,20 @@ bool read_online_chunks(const OnlineAudioSource& source,AudioChunkConsumer& cons
             DWORD code=0;if(!GetExitCodeProcess(process.value,&code)||code||pending||!any){
                 failure.set("online.decode","Online decoder exit="+std::to_string(code)+" "+errors);return false;
             }
+            if(relayed){
+                WaitForSingleObject(resolverProcess.value,5000);
+                DWORD resolverCode=STILL_ACTIVE;
+                if(!GetExitCodeProcess(resolverProcess.value,&resolverCode)||resolverCode){
+                    failure.set("online.transfer","Platform transfer exit="+std::to_string(resolverCode)+" "+errors);return false;
+                }
+            }
             if(source.duration_seconds>from&&static_cast<double>(decoded_frames)/48000+.5<source.duration_seconds-from){
                 failure.set("online.truncated","Online audio ended early: decoded="+std::to_string(static_cast<double>(decoded_frames)/48000)+" expected="+std::to_string(source.duration_seconds-from));return false;
             }
             return true;
         }
         if(std::chrono::steady_clock::now()-last>std::chrono::seconds(20)){
-            TerminateJobObject(job.value,1);failure.set("online.timeout","No audio received for 20 seconds "+errors);return false;
+            stopOwned(1);failure.set("online.timeout","No audio received for 20 seconds "+errors);return false;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }

@@ -14,10 +14,6 @@ import sys
 import time
 import uuid
 
-import win32con
-import win32gui
-import win32process
-
 CASES = {
     "bilibili": "https://www.bilibili.com/video/BV13x41117TL",
     "netease": "https://music.163.com/#/song?id=550136151",
@@ -32,6 +28,10 @@ CASES = {
 
 
 def main():
+    import win32con
+    import win32gui
+    import win32process
+
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exe", type=Path, required=True)

@@ -8,6 +8,8 @@ struct OnlineAudioSource final {
     std::string url;
     std::string headers;
     double duration_seconds = 0;
+    std::filesystem::path resolver;
+    std::vector<std::string> resolver_arguments;
 };
 [[nodiscard]] bool read_online_chunks(const OnlineAudioSource& source, AudioChunkConsumer& consumer,
     Failure& failure, const std::atomic<bool>* cancelled = nullptr, double from_seconds = 0.0);

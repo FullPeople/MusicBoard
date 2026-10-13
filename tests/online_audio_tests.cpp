@@ -55,6 +55,29 @@ int wmain(int argc,wchar_t** argv){
     const bool started=job.start(url,tools,failure);const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(40);
     while(started&&!job.ready()&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(std::chrono::milliseconds(10));
     r.check_eq(started&&job.ready()&&job.failure().empty()&&job.audio(),"Direct URL resolves metadata and prepares online audio",started?job.failure().to_string():failure.to_string());
+    {
+        OnlineAudioSource relayed=source;relayed.resolver=tools/L"yt-dlp.exe";
+        relayed.resolver_arguments={"--ignore-config","--no-plugin-dirs","--quiet","--no-progress","--no-warnings",
+            "--socket-timeout","15","--no-playlist","-o","-",url};
+        failure.clear();Collect transferred;
+        const bool transferredOK=read_online_chunks(relayed,transferred,failure);
+        r.check_eq(transferredOK&&transferred.samples==reference.samples,
+            "Platform transfer pipe preserves exact decoded PCM",failure.to_string());
+        failure.clear();Collect rejected;OnlineAudioSource broken=relayed;
+        broken.resolver_arguments={"--musicboard-owned-invalid-test-option"};
+        const auto failedAt=std::chrono::steady_clock::now();
+        r.check_eq(!read_online_chunks(broken,rejected,failure)&&!failure.empty()&&rejected.samples.empty()&&
+            std::chrono::steady_clock::now()-failedAt<std::chrono::seconds(5),
+            "Failed platform transfer reaches decoder EOF without inherited pipe leaks",failure.to_string());
+        if(argc==5){
+            failure.clear();OnlineAudioSource stalledRelay=relayed;stalledRelay.resolver_arguments.back()=wide_to_utf8(argv[4]);
+            std::atomic<bool> stopRelay{false};Collect blockedRelay;bool relayRead=false;
+            std::thread pendingRelay([&]{relayRead=read_online_chunks(stalledRelay,blockedRelay,failure,&stopRelay);});Sleep(250);
+            const auto stoppedAt=std::chrono::steady_clock::now();stopRelay=true;pendingRelay.join();
+            r.check_eq(!relayRead&&failure.code=="audio.cancelled"&&std::chrono::steady_clock::now()-stoppedAt<std::chrono::seconds(2),
+                "Cancelling platform transfer stops supplier and decoder promptly",failure.to_string());
+        }
+    }
     if(argc==5){
         failure.clear();Collect tail;tail.limit=48000*60*2;OnlineAudioSource shortSource=source;shortSource.url=wide_to_utf8(argv[3]);shortSource.duration_seconds=30;
         r.check_eq(!read_online_chunks(shortSource,tail,failure)&&failure.code=="online.truncated","Premature audio EOF contradicting source duration is reported",failure.to_string());

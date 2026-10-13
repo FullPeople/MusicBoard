@@ -63,6 +63,14 @@ void OnlineJob::run(std::string url,std::filesystem::path tools){
         }
         if(source.headers.find("User-Agent: ")==std::string::npos)
             source.headers="User-Agent: "+std::string(kBrowserUserAgent)+"\r\n"+source.headers;
+        source.resolver=tools/L"yt-dlp.exe";
+        source.resolver_arguments={"--ignore-config","--no-plugin-dirs","--no-playlist","--quiet","--no-warnings","--no-progress",
+            "--socket-timeout","15","--retries","2","--fragment-retries","2","-f","bestaudio/best","-o","-",
+            "--ffmpeg-location",path_to_utf8(tools),"--user-agent",std::string(kBrowserUserAgent)};
+        if(std::filesystem::is_directory(tools/L"plugins",ec)){
+            source.resolver_arguments.push_back("--plugin-dirs");source.resolver_arguments.push_back(path_to_utf8(tools/L"plugins"));
+        }
+        source.resolver_arguments.push_back(url);
     }
     if(url_is_well_formed(source.url)&&(!std::isfinite(duration)||duration<=0)&&classify_url(url).kind!=ImportSourceKind::direct_http){
         std::string metadata;std::vector<std::string> arguments={"-v","error","-rw_timeout","15000000"};
