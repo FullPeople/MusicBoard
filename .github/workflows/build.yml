@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: musicboard-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 jobs:
   windows:
     runs-on: windows-2022
