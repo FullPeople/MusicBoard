@@ -1,23 +1,49 @@
 name: Windows build and tests
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/**']
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: musicboard-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 jobs:
   windows:
     runs-on: windows-2022
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Check out pinned native update helper source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: FullPeople/FullOffice
+          ref: 184cd8ed6d0b561e66fa13572853082c04310d45
+          path: .cache/shared-fulltools
+      - name: Verify public source digests and release signature
+        run: python tools/build_media_runtime.py --verify-sources-only
       - name: Configure
         run: cmake --preset windows-x64
       - name: Build
         run: cmake --build --preset release
       - name: Test
         run: ctest --preset release --output-on-failure
+      - name: Build source-matched media runtime
+        run: python tools/fetch_media_tools.py --build-audio
+      - name: Build native update helper
+        shell: pwsh
+        run: |
+          cmake -S .cache/shared-fulltools/src/FullTools.Distribution -B .cache/update-helper
+          if ($LASTEXITCODE -ne 0) { throw 'Update helper configuration failed' }
+          cmake --build .cache/update-helper --config Release --target FullToolsUpdater --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Update helper build failed' }
+          Copy-Item -LiteralPath '.cache/update-helper/Release/FullToolsUpdater.exe' -Destination 'build/windows-x64/Release/FullToolsUpdater.exe'
       - name: Package
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.2.0
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.3.2
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: MusicBoard-windows-x64

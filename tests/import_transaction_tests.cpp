@@ -338,5 +338,19 @@ int main() {
         registry.check(result.duration_seconds > 0.1, "发布后重新探测拿到了时长");
     }
 
+    {
+        Sandbox box;
+        const auto staged = box.staging / L"来源片段.wav";
+        registry.check(musicboard::test::write_test_wav(staged, 200), "准备时长远短于来源的片段");
+        auto request = box.request(staged);
+        request.source_duration_seconds = 197.0;
+        ImportResult result;
+        Failure failure;
+        const bool ok = import_staged_file(request, result, failure);
+        registry.check_eq(ok, "可解码的片段允许导入", failure.to_string());
+        registry.check(result.content_incomplete, "导入结果明确标注片段");
+        registry.check(result.installed_path == box.target / L"来源片段 (试听片段).wav",
+            "离线文件名保留片段标示，重新扫描也可见");
+    }
     return registry.finish("import_transaction_tests");
 }

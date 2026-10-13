@@ -4,6 +4,8 @@
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
+#include "core/localization.h"
 
 #include "library/library_ops.h"
 
@@ -28,10 +30,12 @@ namespace {
     return std::string(begin, end);
 }
 
-[[nodiscard]] bool contains_any(std::string_view haystack,
+[[nodiscard]] bool matches_platform_host(std::string_view hostname,
                                 const std::array<std::string_view, 2>& needles) {
     for (const auto& needle : needles) {
-        if (haystack.find(needle) != std::string_view::npos) {
+        if (!needle.empty() && (hostname == needle ||
+            (hostname.size() > needle.size() && hostname.ends_with(needle) &&
+             hostname[hostname.size() - needle.size() - 1] == '.'))) {
             return true;
         }
     }
@@ -77,17 +81,28 @@ struct PlatformEntry final {
     bool supported;
 };
 
-// 顺序有意义：先匹配到的赢。把已知"不支持"的放前面，
-// 免得 bilibili 链接被当成通用链接丢给 yt-dlp 再失败。
-constexpr std::array<PlatformEntry, 5> kPlatforms = {{
-    {"bilibili", "哔哩哔哩", {"bilibili.com", "b23.tv"}, false},
+// 平台按真实主机名匹配。下载器仍会报告登录、地区和内容权限问题。
+constexpr std::array<PlatformEntry, 10> kPlatforms = {{
+    {"bilibili", "哔哩哔哩", {"bilibili.com", "b23.tv"}, true},
     {"youtube", "YouTube", {"youtube.com", "youtu.be"}, true},
     {"netease", "网易云音乐", {"music.163.com", "163cn.tv"}, true},
+    {"qqmusic", "QQ 音乐", {"y.qq.com", "qqmusic.qq.com"}, true},
+    {"kugou", "酷狗音乐", {"kugou.com", "kugou.cn"}, true},
+    {"kuwo", "酷我音乐", {"kuwo.cn", "kuwo.com"}, true},
     {"soundcloud", "SoundCloud", {"soundcloud.com", "soundcloud.app.goo.gl"}, true},
+    {"bandcamp", "Bandcamp", {"bandcamp.com", "bandcamp.app"}, true},
+    {"vimeo", "Vimeo", {"vimeo.com", "vimeopro.com"}, true},
     {"direct", "直接链接", {"", ""}, true},   // 占位，不会靠域名命中
 }};
 
 }  // namespace
+
+std::string normalize_import_url(std::string_view url) {
+    std::string result = trim_ascii(url);
+    const auto end = result.find("://");
+    if (end != std::string::npos) result.replace(0, end, lowercase_ascii(std::string_view(result).substr(0, end)));
+    return result;
+}
 
 bool url_is_well_formed(std::string_view url) {
     const std::string text = trim_ascii(url);
@@ -102,13 +117,11 @@ bool url_is_well_formed(std::string_view url) {
         }
     }
     std::string_view rest;
-    if (text.starts_with("https://")) {
+    const std::string scheme = lowercase_ascii(std::string_view(text).substr(0, text.find("://")));
+    if (scheme == "https" && text.find("://") == 5) {
         rest = std::string_view(text).substr(8);
-    } else if (text.starts_with("http://")) {
+    } else if (scheme == "http" && text.find("://") == 4) {
         rest = std::string_view(text).substr(7);
-    } else if (text.starts_with("HTTP://") || text.starts_with("HTTPS://")) {
-        // 大小写不敏感地接受，但主机名要重新算
-        rest = std::string_view(text).substr(text.find("//") + 2);
     } else {
         return false;
     }
@@ -135,12 +148,20 @@ UrlClassification classify_url(std::string_view url) {
     }
 
     const std::string lower = lowercase_ascii(text);
+    const std::size_t authority_begin = lower.find("://") + 3;
+    const std::size_t authority_end = lower.find_first_of("/?#", authority_begin);
+    std::string_view hostname = std::string_view(lower).substr(
+        authority_begin, authority_end == std::string::npos ? std::string::npos : authority_end - authority_begin);
+    const std::size_t at = hostname.rfind('@');
+    if (at != std::string_view::npos) hostname.remove_prefix(at + 1);
+    if (!hostname.starts_with("[")) hostname = hostname.substr(0, hostname.find(':'));
+    if (hostname.ends_with(".")) hostname.remove_suffix(1);
 
     for (const PlatformEntry& entry : kPlatforms) {
         if (entry.id == "direct") {
             continue;
         }
-        if (!contains_any(lower, entry.domains)) {
+        if (!matches_platform_host(hostname, entry.domains)) {
             continue;
         }
         result.platform = std::string(entry.id);
@@ -353,27 +374,71 @@ std::string suggest_yt_dlp_fix(std::string_view output) {
     };
 
     if (has("ffmpeg") && (has("not found") || has("postprocessing") || has("postprocessor"))) {
-        return "缺少 ffmpeg：转成 mp3 需要它。装上 ffmpeg 并把它放进 PATH。";
+        return tr("音频转换组件缺失或损坏，请重新安装音乐板。", "The audio conversion component is missing or damaged. Reinstall MusicBoard.");
+    }
+    if (has("logged-in") || has("login required") || has("sign in") || has("cookies")) {
+        return tr("此内容需要登录来源平台。请使用公开可访问的链接，或导入你已取得的本地音频。", "This source requires login. Use a publicly accessible link or import a local audio file you already have.");
+    }
+    if (has("429") || has("too many requests")) {
+        return tr("来源平台暂时限制了请求，请稍后再试。", "The source is limiting requests. Try again later.");
     }
     if (has("unsupported url") || has("no suitable extractor")) {
-        return "yt-dlp 不认识这个链接。先试 `yt-dlp -U` 更新，或者确认这个站点还能匿名访问。";
+        return tr("请粘贴单首音乐或单个视频的完整页面链接，并检查音乐板更新。", "Paste the full page URL of one track or video and check for MusicBoard updates.");
     }
-    if (has("403") || has("forbidden")) {
-        return "对方拒绝了访问：可能需要登录凭证，或者这条内容有地区限制。";
+    if (has("403") || has("forbidden") || has("source denied access")) {
+        return tr("来源平台拒绝了访问，可能需要登录或存在地区限制。请换一个公开可访问的来源。", "The source denied access and may require login or restrict your region. Try a publicly accessible source.");
     }
-    if (has("404") || has("video unavailable") || has("not found")) {
-        return "目标不存在或已被删除。";
+    if (has("404") || has("video unavailable") || has("video is unavailable") || has("not found")) {
+        return tr("请在浏览器中检查链接是否仍可播放，或换一个有效链接。", "Check whether this link still plays in your browser, or try another valid link.");
     }
     if (has("ssl") || has("certificate")) {
-        return "证书校验失败：检查系统时间，或是否有代理在中间拦截。";
+        return tr("请检查系统时间和网络代理设置后重试。", "Check your system clock and network proxy settings, then retry.");
     }
     if (has("timed out") || has("timeout")) {
-        return "网络超时：检查网络或代理设置。";
+        return tr("请检查网络连接和代理设置后重试。", "Check your network connection and proxy settings, then retry.");
     }
     if (has("unrecognized arguments") || has("no such option")) {
-        return "本机的 yt-dlp 版本太旧，不认识这里用的参数。先 `yt-dlp -U` 更新。";
+        return tr("下载组件与当前软件不兼容，请检查音乐板更新或重新安装。", "The download component is incompatible. Check for MusicBoard updates or reinstall.");
     }
     return {};
+}
+
+std::string summarize_yt_dlp_failure(std::string_view output) {
+    const std::string lower = lowercase_ascii(output);
+    const auto has = [&lower](std::string_view needle) { return lower.find(needle) != std::string::npos; };
+    if (has("logged-in") || has("login required") || has("sign in") || has("cookies"))
+        return tr("此链接需要登录后才能获取音频。", "This link requires login to access its audio.");
+    if (has("429") || has("too many requests"))
+        return tr("来源平台暂时限制了下载。", "The source is temporarily limiting downloads.");
+    if (has("403") || has("forbidden") || has("source denied access"))
+        return tr("来源平台拒绝了下载。", "The source denied the download.");
+    if (has("404") || has("video unavailable") || has("video is unavailable"))
+        return tr("此内容已不可用。", "This content is unavailable.");
+    if (has("unsupported url") || has("no suitable extractor"))
+        return tr("暂时无法解析此链接。", "This link could not be resolved.");
+    if (has("timed out") || has("timeout"))
+        return tr("连接来源平台超时。", "The connection to the source timed out.");
+    if (has("ssl") || has("certificate"))
+        return tr("无法验证来源平台的连接证书。", "The source connection certificate could not be verified.");
+    return tr("链接下载失败。", "The link download failed.");
+}
+
+bool parse_yt_dlp_duration_line(std::string_view line, double& seconds) {
+    constexpr std::string_view prefix = "MUSICBOARD_SOURCE_DURATION=";
+    if (!line.starts_with(prefix)) return false;
+    const std::string value(line.substr(prefix.size()));
+    if (value.empty()) return false;
+    char* end = nullptr;
+    const double parsed = std::strtod(value.c_str(), &end);
+    if (end != value.c_str() + value.size() || !std::isfinite(parsed) || parsed <= 0.0) return false;
+    seconds = parsed;
+    return true;
+}
+
+bool downloaded_audio_is_incomplete(double source_seconds, double audio_seconds) noexcept {
+    if (!std::isfinite(source_seconds) || !std::isfinite(audio_seconds) ||
+        source_seconds <= 0.0 || audio_seconds <= 0.0) return false;
+    return source_seconds - audio_seconds > std::max(2.0, source_seconds * 0.02);
 }
 
 }  // namespace musicboard

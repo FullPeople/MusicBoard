@@ -78,15 +78,24 @@ int main() {
         registry.check(result.platform == "soundcloud", "SoundCloud 认得出");
     }
     {
-        // 明确不支持的平台要给出人话，而不是把它丢给 yt-dlp 再失败
         const auto result = classify_url("https://www.bilibili.com/video/BV1xx411c7mD");
-        registry.check(result.kind == ImportSourceKind::unsupported, "哔哩哔哩被判为不支持");
-        registry.check(result.rejection_reason.find("哔哩哔哩") != std::string::npos,
-                       "拒绝原因里点名了平台");
+        registry.check(result.kind == ImportSourceKind::yt_dlp && result.platform == "bilibili", "哔哩哔哩交给已支持的提取器");
+        registry.check(result.rejection_reason.empty(), "可导入平台没有预先拒绝原因");
     }
     {
         const auto result = classify_url("https://b23.tv/abcdefg");
-        registry.check(result.kind == ImportSourceKind::unsupported, "b23.tv 短链同样被拒");
+        registry.check(result.kind == ImportSourceKind::yt_dlp && result.platform == "bilibili", "b23.tv 短链可以导入");
+    }
+    {
+        registry.check(classify_url("https://y.qq.com/n/ryqq/songDetail/001234").platform == "qqmusic", "QQ 音乐主机识别");
+        registry.check(classify_url("https://m.y.qq.com/portal/song.html?id=123").platform == "qqmusic", "QQ 音乐手机链接识别");
+        registry.check(classify_url("https://www.kugou.com/song/abc.html").platform == "kugou", "酷狗链接识别");
+        registry.check(classify_url("https://www.kuwo.cn/play_detail/123").platform == "kuwo", "酷我链接识别");
+        registry.check(classify_url("https://artist.bandcamp.com/track/example").platform == "bandcamp", "Bandcamp 子域名识别");
+        registry.check(classify_url("https://player.vimeo.com/video/123").platform == "vimeo", "Vimeo 子域名识别");
+        registry.check(classify_url("https://youtube.com.invalid.example/song").platform == "generic", "相似主机名不会冒充平台");
+        registry.check(classify_url("https://example.com/music.163.com/song.mp3").kind == ImportSourceKind::direct_http, "路径中的平台文字不改变直链类型");
+        registry.check(classify_url("https://example.com/page?next=https://www.bilibili.com/video/123").platform == "generic", "查询串中的平台文字不改变来源");
     }
     {
         // 直接指向音频文件 → 自己下就行，不该要求用户装 yt-dlp
@@ -228,7 +237,7 @@ int main() {
 
     {
         const auto suggestion = suggest_yt_dlp_fix("ERROR: Postprocessing: ffmpeg not found");
-        registry.check(suggestion.find("ffmpeg") != std::string::npos, "缺 ffmpeg 给出对应建议");
+        registry.check(suggestion.find("重新安装") != std::string::npos, "缺少转换组件提示重新安装");
     }
     {
         const auto suggestion = suggest_yt_dlp_fix("ERROR: HTTP Error 403: Forbidden");
@@ -246,6 +255,23 @@ int main() {
     }
     registry.check(suggest_yt_dlp_fix("完全看不懂的输出").empty(),
                    "看不懂的输出不给建议（总比给一条错的好）");
+    registry.check(url_is_well_formed("hTtPs://music.163.com/song?id=1"), "混合大小写协议有效");
+    registry.check(normalize_import_url("  hTtPs://music.163.com/SONG?id=AaBb#KeepCase  ") ==
+        "https://music.163.com/SONG?id=AaBb#KeepCase", "规范化协议和粘贴空白，保留路径参数大小写");
+    registry.check(summarize_yt_dlp_failure("The web client only works when logged-in. Use --cookies") ==
+        "此链接需要登录后才能获取音频。", "登录提示不暴露下载器参数");
+    registry.check(summarize_yt_dlp_failure("This video is unavailable") == "此内容已不可用。", "不可用内容有明确说明");
+    registry.check(suggest_yt_dlp_fix("HTTP Error 429: Too Many Requests").find("稍后") != std::string::npos,
+        "限流建议稍后重试");
+    double duration = 0.0;
+    registry.check(parse_yt_dlp_duration_line("MUSICBOARD_SOURCE_DURATION=197.5", duration) && duration == 197.5,
+        "读取来源时长");
+    for (const auto* invalid : {"MUSICBOARD_SOURCE_DURATION=NA", "MUSICBOARD_SOURCE_DURATION=nan",
+            "MUSICBOARD_SOURCE_DURATION=inf", "MUSICBOARD_SOURCE_DURATION=-1", "MUSICBOARD_SOURCE_DURATION=197junk"})
+        registry.check(!parse_yt_dlp_duration_line(invalid, duration), std::string("非法来源时长被拒绝：") + invalid);
+    registry.check(downloaded_audio_is_incomplete(197.5, 30.0), "试听片段被标注为不完整");
+    registry.check(!downloaded_audio_is_incomplete(197.5, 197.2), "编解码微小差异不误报");
+    registry.check(!downloaded_audio_is_incomplete(0.0, 30.0), "未知来源时长不猜测完整性");
 
     return registry.finish("url_classify_tests");
 }

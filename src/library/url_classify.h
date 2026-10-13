@@ -43,6 +43,7 @@ struct UrlClassification final {
 // 形状检查：http(s) 开头、有主机名、没有控制字符。
 // 比原版的 "以 http 开头且含一个点" 严格一点 —— 后者会把 "http://." 放过。
 [[nodiscard]] bool url_is_well_formed(std::string_view url);
+[[nodiscard]] std::string normalize_import_url(std::string_view url);
 
 // 从 URL 推导一个期望的文件名主干（已净化，可直接当文件名）。
 // 推不出来时返回空串，调用方应改用兜底名。
@@ -60,6 +61,10 @@ struct UrlClassification final {
 
 // 针对常见失败给一句可执行的建议。没有对应建议时返回空串。
 [[nodiscard]] std::string suggest_yt_dlp_fix(std::string_view output);
+
+[[nodiscard]] std::string summarize_yt_dlp_failure(std::string_view output);
+[[nodiscard]] bool parse_yt_dlp_duration_line(std::string_view line, double& seconds);
+[[nodiscard]] bool downloaded_audio_is_incomplete(double source_seconds, double audio_seconds) noexcept;
 
 // URL 里的百分号解码（%E4%B8%AD → 中）。非法序列原样保留。
 [[nodiscard]] std::string percent_decode(std::string_view text);

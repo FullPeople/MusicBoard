@@ -1,12 +1,15 @@
 #pragma once
 
 #include <chrono>
+#include <atomic>
+#include <thread>
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
 
 #include "core/failure.h"
+#include "audio/prepared_audio.h"
 #include "library/http_download.h"
 #include "library/import_transaction.h"
 #include "library/process_runner.h"
@@ -17,9 +20,10 @@ namespace musicboard {
 // ============================================================================
 // 一次 URL 导入
 //
-// 状态机：idle → downloading → publishing（这一步是同步的、很快）→ done
+// 状态机：idle → downloading → publishing → preparing（可选后台准备）→ done
 //                                        ↘ failed
 //                    ↘ cancelled
+// 入库与播放准备在同一个可取消后台任务中顺序执行。
 //
 // 与原版（url_importer.gd）的差别，每一条都对着一个具体问题：
 //
@@ -38,6 +42,8 @@ namespace musicboard {
 enum class ImportJobState : std::uint8_t {
     idle,
     downloading,
+    publishing,
+    preparing,
     done,
     failed,
     cancelled,
@@ -57,6 +63,7 @@ struct ImportJobRequest final {
     std::string preferred_stem;
     // 多久没有输出就判定卡死
     double stall_timeout_seconds = 120.0;
+    bool prepare_playback = false;
 };
 
 struct ImportJobStatus final {
@@ -83,6 +90,10 @@ struct ImportJobStatus final {
     // 失败时保留的暂存目录，便于排查
     std::filesystem::path staging_dir;
     bool output_truncated = false;
+    double source_duration_seconds = 0.0;
+    std::string content_warning;
+    bool playback_preparation_cancelled = false;
+    double playback_preparation_seconds = 0.0;
 };
 
 class ImportJob final {
@@ -102,10 +113,18 @@ public:
     void cancel();
 
     [[nodiscard]] const ImportJobStatus& status() const noexcept { return status_; }
+    [[nodiscard]] bool is_running() const noexcept {
+        return status_.state == ImportJobState::downloading || status_.state == ImportJobState::publishing ||
+            status_.state == ImportJobState::preparing;
+    }
     [[nodiscard]] const ImportResult& result() const noexcept { return result_; }
+    [[nodiscard]] const std::shared_ptr<const PreparedAudio>& prepared_audio() const noexcept { return prepared_audio_; }
+    [[nodiscard]] const AudioInfo& playback_info() const noexcept { return playback_info_; }
+    [[nodiscard]] const Failure& preparation_failure() const noexcept { return preparation_failure_; }
 
 private:
     void publish_from_staging();
+    void run_publication();
     // 直链下载完之后，用嗅探到的真实容器给文件改名。
     // 服务器给的名字（Content-Disposition）与 URL 的扩展名都可能是错的 ——
     // 扩展名是用户随手改的，这条纪律在解码层已经立过（见 AGENTS.md 第 5 条边界）。
@@ -121,6 +140,17 @@ private:
     bool preferred_stem_from_user_ = false;
     std::vector<std::string> yt_dlp_arguments_;
     bool keep_staging_ = true;
+    std::thread preparation_worker_;
+    std::atomic<bool> preparation_cancelled_{false};
+    std::atomic<bool> preparation_ready_{false};
+    std::shared_ptr<const PreparedAudio> prepared_audio_;
+    AudioInfo playback_info_;
+    Failure preparation_failure_;
+    std::chrono::steady_clock::time_point preparation_started_;
+    ImportJobStatus publication_status_;
+    std::atomic<ImportJobState> publication_phase_{ImportJobState::publishing};
+    std::atomic<std::uint64_t> publication_copied_{0};
+    std::atomic<std::uint64_t> publication_total_{0};
 };
 
 // 找 yt-dlp。找不到时 failure.context 会列出找过哪些位置。
