@@ -1,6 +1,7 @@
 #include "audio/stream_feed.h"
 #include <algorithm>
 #include "core/path_utf8.h"
+#include "audio/online_audio.h"
 
 namespace musicboard {
 void StreamFeed::start(IXAudio2SourceVoice* voice, double from, bool loop) {
@@ -75,7 +76,9 @@ bool StreamFeed::consume(const AudioFormat& format, const std::int16_t* samples,
 void StreamFeed::run(double from, bool loop) {
     Failure failure;
     do {
-        if (!read_audio_chunks(audio_->path, *this, failure, &cancelled_, from) || !submit(failure)) break;
+        const bool read = audio_->online ? read_online_chunks(*audio_->online, *this, failure, &cancelled_, from)
+                                        : read_audio_chunks(audio_->path, *this, failure, &cancelled_, from);
+        if (!read || !submit(failure)) break;
         from = 0.0;
     } while (loop && !cancelled_);
     if (!failure.empty() && !cancelled_) {

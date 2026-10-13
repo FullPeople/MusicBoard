@@ -1,7 +1,9 @@
-MusicBoard 0.2.0
+MusicBoard 0.3.3
 ===============
 
 A native Windows soundboard for tabletop sessions. No music or sound effects are included.
+The link importer can stream supported HTTP audio without saving a library file.
+Online entries last for the current session; source access restrictions still apply.
 
 1. Extract the entire archive. Run MusicBoardSetup.exe to install without administrator rights,
    or run MusicBoard.exe directly. English setup output: MusicBoardSetup.exe --lang en

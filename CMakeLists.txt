@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(MusicBoard VERSION 0.3.2 LANGUAGES C CXX RC)
+project(MusicBoard VERSION 0.3.3 LANGUAGES C CXX RC)
 add_compile_definitions(MUSICBOARD_PRODUCT_VERSION="${PROJECT_VERSION}")
 
 if(NOT WIN32)
@@ -71,6 +71,7 @@ add_library(musicboard_audio STATIC
     src/audio/preload_cache.cpp
     src/audio/prepared_audio.cpp
     src/audio/stream_feed.cpp
+    src/audio/online_audio.cpp
     src/audio/envelope_worker.cpp
     src/audio/waveform.cpp
 )
@@ -110,6 +111,7 @@ add_library(musicboard_library STATIC
     src/library/process_runner.cpp
     src/library/staging.cpp
     src/library/import_job.cpp
+    src/library/online_job.cpp
     src/library/http_download.cpp
     src/library/cover_art.cpp
 )
@@ -251,6 +253,7 @@ if(MUSICBOARD_BUILD_TESTS)
     musicboard_add_test(waveform_tests musicboard_audio)
     musicboard_add_test(envelope_worker_tests musicboard_audio)
     musicboard_add_test(preload_stream_tests musicboard_audio musicboard_library)
+    musicboard_add_test(online_audio_tests musicboard_audio musicboard_library)
     musicboard_add_test(ui_core_tests musicboard_ui)
     musicboard_add_test(cover_cache_tests musicboard_ui)
     musicboard_add_test(panel_layout_tests musicboard_ui)

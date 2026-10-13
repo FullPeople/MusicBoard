@@ -19,6 +19,7 @@
 #include "library/library_scanner.h"
 #include "library/library_loader.h"
 #include "library/import_job.h"
+#include "library/online_job.h"
 #include "platform/link_import_window.h"
 #include "platform/composition_window.h"
 #include "platform/global_hotkeys.h"
@@ -88,6 +89,7 @@ public:
     // 测试的成败不该取决于跑测试的机器有没有声卡。
     [[nodiscard]] int self_test();
     [[nodiscard]] int self_test_display();
+    [[nodiscard]] int self_test_online(const std::string& url);
 
     // 给自检用
     [[nodiscard]] const ui::PanelState& panel_state() const noexcept { return state_; }
@@ -280,6 +282,7 @@ private:
     std::filesystem::path library_root_;
     LinkImportWindow link_import_window_;
     std::unique_ptr<ImportJob> link_import_job_;
+    std::unique_ptr<OnlineJob> online_job_;
     LinkImportInput link_import_input_;
     bool link_import_active_ = false;
     std::string link_import_status_;

@@ -40,7 +40,7 @@ bool LinkImportWindow::show(HWND owner, Failure& failure) {
         window_ = CreateWindowExW(WS_EX_TOOLWINDOW, kind, tr(L"导入音乐链接", L"Import music link"),
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
             parent.left + MulDiv(30, dpi, 96), parent.top + MulDiv(30, dpi, 96),
-            MulDiv(640, dpi, 96), MulDiv(380, dpi, 96), owner, nullptr, cls.hInstance, this);
+            MulDiv(640, dpi, 96), MulDiv(410, dpi, 96), owner, nullptr, cls.hInstance, this);
         if (!window_ || !create_controls(failure)) return false;
         if (!SetPropW(window_, L"MusicBoard.ModelessDialog", reinterpret_cast<HANDLE>(1))) {
             failure.set("ui.link_import", "SetProp Win32=" + std::to_string(GetLastError()));
@@ -81,12 +81,14 @@ bool LinkImportWindow::create_controls(Failure& failure) {
     autoplay_ = control(0, L"BUTTON", tr(L"下载完成后播放；文件保留在曲库中，可离线使用", L"Play when downloaded; keep in library for offline use"),
         BS_AUTOCHECKBOX | WS_TABSTOP, 22, 169, 575, 26, 104);
     if (autoplay_) SendMessageW(autoplay_, BM_SETCHECK, BST_CHECKED, 0);
+    online_ = control(0, L"BUTTON", tr(L"直接在线播放，不保存音频文件", L"Stream online without saving audio files"),
+        BS_AUTOCHECKBOX | WS_TABSTOP, 22, 197, 575, 26, 109);
     status_ = control(0, L"STATIC", tr(L"支持常见音乐平台、视频平台和音频直链", L"Common music/video platforms and direct audio links"),
-        0, 22, 207, 575, 48, 105);
-    start_ = control(0, L"BUTTON", tr(L"下载到曲库", L"Download to library"), BS_DEFPUSHBUTTON | WS_TABSTOP, 367, 279, 138, 31, 106);
-    cancel_ = control(0, L"BUTTON", tr(L"取消下载", L"Cancel download"), WS_TABSTOP, 517, 279, 80, 31, 107);
-    details_ = control(0, L"BUTTON", tr(L"查看详情", L"View details"), WS_TABSTOP, 22, 279, 105, 31, 108);
-    if (!font_ || !labels || !url_ || !category_ || !source_ || !autoplay_ || !status_ || !start_ || !cancel_ || !details_) {
+        0, 22, 230, 575, 48, 105);
+    start_ = control(0, L"BUTTON", tr(L"下载到曲库", L"Download to library"), BS_DEFPUSHBUTTON | WS_TABSTOP, 367, 307, 138, 31, 106);
+    cancel_ = control(0, L"BUTTON", tr(L"取消任务", L"Cancel task"), WS_TABSTOP, 517, 307, 80, 31, 107);
+    details_ = control(0, L"BUTTON", tr(L"查看详情", L"View details"), WS_TABSTOP, 22, 307, 105, 31, 108);
+    if (!font_ || !labels || !url_ || !category_ || !source_ || !autoplay_ || !online_ || !status_ || !start_ || !cancel_ || !details_) {
         failure.set("ui.link_import", "Control creation Win32=" + std::to_string(GetLastError()));
         return false;
     }
@@ -106,9 +108,10 @@ void LinkImportWindow::set_status(const std::string& text, bool running) {
     EnableWindow(start_, !running);
     EnableWindow(cancel_, running);
     EnableWindow(url_, !running);
-    EnableWindow(category_, !running);
+    EnableWindow(category_, !running && SendMessageW(online_, BM_GETCHECK, 0, 0) != BST_CHECKED);
     EnableWindow(source_, !running);
-    EnableWindow(autoplay_, !running);
+    EnableWindow(autoplay_, !running && SendMessageW(online_, BM_GETCHECK, 0, 0) != BST_CHECKED);
+    EnableWindow(online_, !running);
 }
 LRESULT CALLBACK LinkImportWindow::window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     auto* self = reinterpret_cast<LinkImportWindow*>(GetWindowLongPtrW(window, GWLP_USERDATA));
@@ -122,6 +125,11 @@ LRESULT CALLBACK LinkImportWindow::window_proc(HWND window, UINT message, WPARAM
 LRESULT LinkImportWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     if (message == WM_CLOSE) { ShowWindow(window_, SW_HIDE); return 0; }
     if (message == WM_COMMAND && HIWORD(wparam) == BN_CLICKED) {
+        if (LOWORD(wparam) == 109) {
+            const bool online = SendMessageW(online_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            SetWindowTextW(start_, online ? tr(L"在线播放", L"Play online") : tr(L"下载到曲库", L"Download to library"));
+            EnableWindow(autoplay_, !online);EnableWindow(category_, !online);return 0;
+        }
         if (LOWORD(wparam) == 108 && !detail_text_.empty()) {
             std::wstring wide;
             Failure failure;
@@ -134,7 +142,8 @@ LRESULT LinkImportWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpa
         if (LOWORD(wparam) == 106 && on_start) {
             LinkImportInput input{text_of(url_), text_of(category_),
                 SendMessageW(source_, CB_GETCURSEL, 0, 0) == 1,
-                SendMessageW(autoplay_, BM_GETCHECK, 0, 0) == BST_CHECKED};
+                SendMessageW(autoplay_, BM_GETCHECK, 0, 0) == BST_CHECKED,
+                SendMessageW(online_, BM_GETCHECK, 0, 0) == BST_CHECKED};
             Failure failure;
             set_details({});
             if (!on_start(input, failure)) {

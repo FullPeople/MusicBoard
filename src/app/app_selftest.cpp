@@ -18,6 +18,7 @@
 #include "core/single_instance.h"
 #include "library/import_transaction.h"
 #include "library/library_ops.h"
+#include "app/native_window_access.h"
 
 namespace musicboard::app {
 
@@ -91,6 +92,37 @@ void remove_tree(const std::filesystem::path& path) {
 }
 
 }  // namespace
+
+int Application::self_test_online(const std::string& url){
+    int failures=0;const auto check=[&](bool value,const char* name){std::printf("%s %s\n",value?"PASS":"FAIL",name);if(!value)++failures;};
+    const auto pump=[&]{MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}on_frame();};
+    auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(20);
+    while(loading_&&std::chrono::steady_clock::now()<deadline){pump();Sleep(10);}
+    if(loading_){check(false,"owned empty library becomes ready");return 1;}
+    show_link_import();HWND dialog=GetWindow(panel_window_handle(),GW_ENABLEDPOPUP);
+    if(dialog==panel_window_handle())dialog=FindWindowW(L"MusicBoard.LinkImport",nullptr);
+    if(!dialog||GetWindowThreadProcessId(dialog,nullptr)!=GetCurrentThreadId()){check(false,"owned online import dialog exists");return 1;}
+    std::wstring wide;Failure failure;if(!utf8_to_wide(url,wide,failure)){check(false,"test URL is UTF-8");return 1;}
+    SetWindowTextW(GetDlgItem(dialog,101),wide.c_str());
+    SendMessageW(GetDlgItem(dialog,109),BM_SETCHECK,BST_CHECKED,0);
+    SendMessageW(dialog,WM_COMMAND,MAKEWPARAM(109,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(dialog,109)));
+    check(!IsWindowEnabled(GetDlgItem(dialog,104)),"online mode disables download autoplay option");
+    SendMessageW(GetDlgItem(dialog,106),BM_CLICK,0,0);
+    check(link_import_active_,"native import button starts online task");
+    deadline=std::chrono::steady_clock::now()+std::chrono::seconds(35);
+    while(link_import_active_&&std::chrono::steady_clock::now()<deadline){pump();Sleep(10);}
+    check(!link_import_active_&&!entries_.empty()&&entries_.back().prepared&&entries_.back().prepared->online,
+        "native online input publishes prepared online entry");
+    if(audio_ready_){
+        deadline=std::chrono::steady_clock::now()+std::chrono::seconds(4);
+        while(std::chrono::steady_clock::now()<deadline){pump();Sleep(10);}
+        const auto state=engine_.slot_state(AudioBus::bgm,bgm_slot_);
+        check(state.in_use&&state.position_seconds>3,"application playback crosses the streaming head");
+        clear_playback(false,false);check(!engine_.slot_state(AudioBus::bgm,bgm_slot_).in_use,"application stop ends online playback");
+    }else std::printf("SKIP application online audio output: no device\n");
+    check(!entries_.empty()&&entries_.back().track.path.empty(),"online entry has no downloaded audio file");
+    return failures?1:0;
+}
 
 int Application::self_test() {
     int total = 0;
