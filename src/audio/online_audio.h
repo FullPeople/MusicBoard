@@ -7,6 +7,7 @@ struct OnlineAudioSource final {
     std::filesystem::path decoder;
     std::string url;
     std::string headers;
+    double duration_seconds = 0;
 };
 [[nodiscard]] bool read_online_chunks(const OnlineAudioSource& source, AudioChunkConsumer& consumer,
     Failure& failure, const std::atomic<bool>* cancelled = nullptr, double from_seconds = 0.0);

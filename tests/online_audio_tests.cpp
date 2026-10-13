@@ -20,7 +20,7 @@ struct Collect final:AudioChunkConsumer{
 };
 }
 int wmain(int argc,wchar_t** argv){
-    Registry r;if(argc!=3){r.skip("Specify bundled media-tools directory and owned HTTP fixture URL");return r.finish("online_audio_tests");}
+    Registry r;if(argc<3){r.skip("Specify bundled media-tools directory and owned HTTP fixture URL");return r.finish("online_audio_tests");}
     const std::filesystem::path tools=argv[1];const std::string url=wide_to_utf8(argv[2]);
     OnlineAudioSource source{tools/L"ffmpeg.exe",url,{}};Failure failure;Collect reference;
     const bool read=read_online_chunks(source,reference,failure);
@@ -46,6 +46,16 @@ int wmain(int argc,wchar_t** argv){
     const bool started=job.start(url,tools,failure);const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(40);
     while(started&&!job.ready()&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(std::chrono::milliseconds(10));
     r.check_eq(started&&job.ready()&&job.failure().empty()&&job.audio(),"Direct URL resolves metadata and prepares online audio",started?job.failure().to_string():failure.to_string());
+    if(argc==5){
+        failure.clear();Collect tail;tail.limit=48000*60*2;OnlineAudioSource shortSource=source;shortSource.url=wide_to_utf8(argv[3]);shortSource.duration_seconds=30;
+        r.check_eq(!read_online_chunks(shortSource,tail,failure)&&failure.code=="online.truncated","Premature audio EOF contradicting source duration is reported",failure.to_string());
+        failure.clear();std::shared_ptr<const PreparedAudio> rejected;
+        r.check_eq(!prepare_online_audio(shortSource,30,rejected,failure)&&!rejected&&failure.code=="online.truncated","Truncated preparation never publishes a false full-length track",failure.to_string());
+        failure.clear();Collect waiting;OnlineAudioSource stalled=source;stalled.url=wide_to_utf8(argv[4]);std::atomic<bool> stop{false};bool streamed=false;
+        std::thread blocked([&]{streamed=read_online_chunks(stalled,waiting,failure,&stop);});Sleep(250);
+        const auto cancelledAt=std::chrono::steady_clock::now();stop=true;blocked.join();
+        r.check_eq(!streamed&&failure.code=="audio.cancelled"&&std::chrono::steady_clock::now()-cancelledAt<std::chrono::seconds(2),"Cancel active stalled network decoder without waiting for timeout",failure.to_string());
+    }
     if(ready){
         AudioEngine engine;failure.clear();
         if(!engine.initialize(failure))r.skip("Audio output unavailable: "+failure.to_string());

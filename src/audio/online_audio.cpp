@@ -62,7 +62,7 @@ bool read_online_chunks(const OnlineAudioSource& source,AudioChunkConsumer& cons
     }
     CloseHandle(pcmWrite.value);pcmWrite.value=nullptr;CloseHandle(errorWrite.value);errorWrite.value=nullptr;
     std::array<std::int16_t,8192> samples{};size_t pending=0;std::string errors;bool any=false;
-    auto last=std::chrono::steady_clock::now();
+    auto last=std::chrono::steady_clock::now();uint64_t decoded_frames=0;
     for(;;){
         if(cancelled&&cancelled->load()){TerminateJobObject(job.value,1);WaitForSingleObject(process.value,5000);failure.set("audio.cancelled","Online playback cancelled");return false;}
         if(consumer.finished()){TerminateJobObject(job.value,0);WaitForSingleObject(process.value,5000);return true;}
@@ -80,6 +80,7 @@ bool read_online_chunks(const OnlineAudioSource& source,AudioChunkConsumer& cons
             }
             last=std::chrono::steady_clock::now();pending+=count;size_t complete=pending/4*4;
             if(complete&&!consumer.consume(AudioFormat{48000,2,16},samples.data(),complete/4,failure))return false;
+            decoded_frames+=complete/4;
             any|=complete>0;pending-=complete;
             if(pending)std::memmove(samples.data(),reinterpret_cast<char*>(samples.data())+complete,pending);
             continue;
@@ -87,7 +88,11 @@ bool read_online_chunks(const OnlineAudioSource& source,AudioChunkConsumer& cons
         if(WaitForSingleObject(process.value,0)==WAIT_OBJECT_0){
             DWORD code=0;if(!GetExitCodeProcess(process.value,&code)||code||pending||!any){
                 failure.set("online.decode","Online decoder exit="+std::to_string(code)+" "+errors);return false;
-            }return true;
+            }
+            if(source.duration_seconds>from&&static_cast<double>(decoded_frames)/48000+.5<source.duration_seconds-from){
+                failure.set("online.truncated","Online audio ended early: decoded="+std::to_string(static_cast<double>(decoded_frames)/48000)+" expected="+std::to_string(source.duration_seconds-from));return false;
+            }
+            return true;
         }
         if(std::chrono::steady_clock::now()-last>std::chrono::seconds(20)){
             TerminateJobObject(job.value,1);failure.set("online.timeout","No audio received for 20 seconds "+errors);return false;
@@ -98,7 +103,7 @@ bool read_online_chunks(const OnlineAudioSource& source,AudioChunkConsumer& cons
 bool prepare_online_audio(const OnlineAudioSource& source,double duration,std::shared_ptr<const PreparedAudio>& prepared,
     Failure& failure,const std::atomic<bool>* cancelled){
     prepared.reset();if(!std::isfinite(duration)||duration<=0){failure.set("online.duration","Online source requires a finite duration");return false;}
-    auto value=std::make_shared<PreparedAudio>();value->online=std::make_shared<OnlineAudioSource>(source);
+    auto value=std::make_shared<PreparedAudio>();auto online=std::make_shared<OnlineAudioSource>(source);online->duration_seconds=duration;value->online=online;
     value->head.format={48000,2,16};value->total_frames=static_cast<uint64_t>(duration*48000);value->head.backend="ffmpeg_online";
     struct Prefix final:AudioChunkConsumer{
         PreparedAudio& audio;explicit Prefix(PreparedAudio& a):audio(a){}
@@ -107,7 +112,7 @@ bool prepare_online_audio(const OnlineAudioSource& source,double duration,std::s
             size_t count=std::min<size_t>(frames*2,192000-audio.head.samples.size());audio.head.samples.insert(audio.head.samples.end(),samples,samples+count);return true;
         }
     } prefix(*value);
-    if(!read_online_chunks(source,prefix,failure,cancelled))return false;
+    if(!read_online_chunks(*online,prefix,failure,cancelled))return false;
     value->head.duration_seconds=static_cast<double>(value->head.samples.size()/2)/48000;
     prepared=std::move(value);return true;
 }

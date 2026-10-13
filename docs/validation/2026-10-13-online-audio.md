@@ -11,3 +11,7 @@
 证据在本机任务的 `artifacts/online-audio-fixture/mp3-online-test.log`、`artifacts/online-application-test/run.log`。可复现脚本 `tools/verify_online_audio.py` 使用自己的 HTTP 服务、生成音频及隔离设置目录，不读取用户曲库。
 
 这些证据尚不包含国内外平台的公网可用性、慢网、HLS、长时间中断恢复、安装升级或发布版本验收。相应测试仍在继续，不据此宣称全部平台已通过。
+
+随后增加了音频提前结束和已连接但不供音的检查。WAV、MP3 两种来源各 12 项通过：提前结束不能被当成完整曲目，准备失败不能发布可播放条目；真实网络解码已经启动时也能及时取消。应用入口和无曲库文件写入检查再次通过。独立证据保存在 `artifacts/online-validation-truncated-preparation/`，先前结果没有覆盖。
+
+在线解析沿用软件随附的酷狗、酷我解析组件；没有读取用户浏览器登录信息。这些组件的公网来源仍需实测，加载组件本身不代表平台验收通过。

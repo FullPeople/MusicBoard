@@ -42,9 +42,14 @@ void OnlineJob::run(std::string url,std::filesystem::path tools){
         }
     }else{
         std::string metadata;
-        if(!execute(tools/L"yt-dlp.exe",{"--ignore-config","--no-plugin-dirs","--no-playlist","--no-warnings","--skip-download","--socket-timeout","15","--retries","2","-f","bestaudio/best",
+        std::vector<std::string> arguments={"--ignore-config","--no-plugin-dirs","--no-playlist","--no-warnings","--skip-download","--socket-timeout","15","--retries","2","-f","bestaudio/best",
             "--print","URL=%(url)s","--print","DURATION=%(duration)s","--print","TITLE=%(title)s",
-            "--print","AGENT=%(http_headers.User-Agent)s","--print","REFERER=%(http_headers.Referer)s",url},metadata))return;
+            "--print","AGENT=%(http_headers.User-Agent)s","--print","REFERER=%(http_headers.Referer)s"};
+        std::error_code ec;if(std::filesystem::is_directory(tools/L"plugins",ec)){
+            arguments.push_back("--plugin-dirs");arguments.push_back(path_to_utf8(tools/L"plugins"));
+        }
+        arguments.push_back(url);
+        if(!execute(tools/L"yt-dlp.exe",std::move(arguments),metadata))return;
         std::istringstream rows(metadata);std::string line;
         while(std::getline(rows,line)){
             if(!line.empty()&&line.back()=='\r')line.pop_back();
