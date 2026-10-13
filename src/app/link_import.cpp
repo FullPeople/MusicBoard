@@ -13,7 +13,7 @@ void Application::show_link_import() {
     link_import_window_.on_start = [this](const LinkImportInput& input, Failure& failure) {
         return start_link_import(input, failure);
     };
-    link_import_window_.on_cancel = [this] { if (link_import_job_) link_import_job_->cancel(); };
+    link_import_window_.on_cancel = [this] { if (link_import_job_) link_import_job_->cancel(); if(online_job_)online_job_->cancel(); };
     Failure failure;
     if (!link_import_window_.show(panel_window_handle(), failure))
         set_status(tr("无法打开链接导入: ", "Could not open link importer: ") + failure.to_string());
@@ -27,6 +27,14 @@ bool Application::start_link_import(const LinkImportInput& input, Failure& failu
     if (classified.kind == ImportSourceKind::unsupported) {
         failure.set("import.url", classified.rejection_reason);
         return false;
+    }
+    if(input.online_only){
+        wchar_t executable[32768]{};const DWORD length=GetModuleFileNameW(nullptr,executable,static_cast<DWORD>(std::size(executable)));
+        if(!length||length>=std::size(executable)){failure.set("online.tools","Application path Win32="+std::to_string(GetLastError()));return false;}
+        online_job_=std::make_unique<OnlineJob>();
+        if(!online_job_->start(input.url,std::filesystem::path(executable).parent_path()/L"media-tools",failure))return false;
+        link_import_input_=input;link_import_active_=true;
+        link_import_window_.set_status(tr("正在准备在线播放…", "Preparing online playback…"),true);return true;
     }
     std::filesystem::path category;
     if (!path_from_utf8(input.category, category, failure)) return false;
@@ -61,6 +69,28 @@ bool Application::start_link_import(const LinkImportInput& input, Failure& failu
 }
 void Application::pump_link_import() {
     if (!link_import_active_) return;
+    if(link_import_input_.online_only){
+        if(!online_job_->ready())return;
+        link_import_active_=false;
+        if(!online_job_->failure().empty()){
+            const auto message=tr("在线播放准备失败：", "Online preparation failed: ")+online_job_->failure().to_string();
+            link_import_window_.set_status(message,false);set_status(message);return;
+        }
+        LibraryEntry entry;entry.track.name=online_job_->title();entry.prepared=online_job_->audio();
+        entry.track.duration_seconds=entry.prepared->duration();entry.track.format=entry.prepared->head.format;
+        entry.category=tr("在线音乐", "Online audio");entry.is_sfx=link_import_input_.as_sfx;entry.label=ui::parse_track_label(entry.track.name);entry.envelope_attempted=true;
+        entries_.push_back(std::move(entry));const size_t index=entries_.size()-1;
+        Failure slots_failure;
+        if(audio_ready_&&!engine_.ensure_sfx_slots(sfx_slot_count+entries_.size(),slots_failure)){
+            link_import_window_.set_status(slots_failure.to_string(),false);set_status(slots_failure.to_string());return;
+        }
+        Column& column=link_import_input_.as_sfx?sfx_:bgm_;
+        if(std::find(column.categories.begin(),column.categories.end(),entries_[index].category)==column.categories.end())column.categories.push_back(entries_[index].category);
+        rebuild_visible(column,link_import_input_.as_sfx);
+        const bool played=link_import_input_.as_sfx?trigger_sfx(0,index):play_bgm(index);
+        const auto message=played?tr("正在在线播放；音频文件未写入曲库", "Playing online; audio was not saved to the library"):tr("在线播放启动失败，请查看状态", "Online playback could not start; see status");
+        link_import_window_.set_status(message,false);set_status(message);return;
+    }
     link_import_job_->pump();
     const auto& status = link_import_job_->status();
     const bool running = link_import_job_->is_running();

@@ -352,6 +352,7 @@ ui::Point Application::to_ui_point(POINT client) const noexcept {
 }
 
 Application::~Application() {
+    if(online_job_)online_job_->cancel();
     loader_.shutdown();
     // Window callbacks must end while every model/render/audio member is alive.
     // The previous global window was destroyed after Application had gone away.
@@ -2080,9 +2081,11 @@ bool Application::start_playback(std::size_t index, const DecodedAudio& audio,
         history_index_ = static_cast<std::ptrdiff_t>(history_.size()) - 1;
     }
 
-    auto recent = std::find_if(recent_bgm_.begin(), recent_bgm_.end(), [&](const auto& item) { return item.path == entries_[index].track.path; });
-    if (recent == recent_bgm_.end()) { recent_bgm_.push_back({entries_[index].track.path, 0, 0}); recent = std::prev(recent_bgm_.end()); }
-    ++recent->count; recent->order = ++recent_order_;
+    if(!entries_[index].track.path.empty()){
+        auto recent = std::find_if(recent_bgm_.begin(), recent_bgm_.end(), [&](const auto& item) { return item.path == entries_[index].track.path; });
+        if (recent == recent_bgm_.end()) { recent_bgm_.push_back({entries_[index].track.path, 0, 0}); recent = std::prev(recent_bgm_.end()); }
+        ++recent->count; recent->order = ++recent_order_;
+    }
     bgm_index_ = index;
     bgm_paused_ = false;
     bgm_offset_ = 0.0;

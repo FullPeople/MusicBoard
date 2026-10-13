@@ -147,6 +147,7 @@ int wmain(int argc, wchar_t** argv) {
     const std::filesystem::path log_path = app::initialize_output();
 
     std::filesystem::path library;
+    std::string online_test_url;
     bool print_settings = false;
     bool print_version = false;
     bool self_test = false;
@@ -163,6 +164,8 @@ int wmain(int argc, wchar_t** argv) {
             print_version = true;
         } else if (argument == L"--selftest") {
             self_test = true;
+        } else if (argument == L"--selftest-online" && i + 1 < argc) {
+            self_test=true;online_test_url=wide_to_utf8(argv[++i]);
         } else if (argument == L"--selftest-display") {
             self_test = true;
             test_display = true;
@@ -239,6 +242,7 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
     if (self_test) {
+        if(!online_test_url.empty())return application.self_test_online(online_test_url);
         // 交互自检：走与真人操作完全相同的事件处理路径，逐条断言结果。
         return test_display ? application.self_test_display() : application.self_test();
     }

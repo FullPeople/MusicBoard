@@ -5,6 +5,7 @@
 #include "audio/decoder.h"
 
 namespace musicboard {
+struct OnlineAudioSource;
 
 inline constexpr double preload_head_seconds = 2.0;
 
@@ -16,6 +17,7 @@ struct PreparedAudio final {
     std::vector<float> envelope;
     std::uint64_t total_frames = 0;
     bool complete = false;
+    std::shared_ptr<const OnlineAudioSource> online;
     [[nodiscard]] double duration() const noexcept {
         return static_cast<double>(total_frames) / head.format.sample_rate;
     }

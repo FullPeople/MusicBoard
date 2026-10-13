@@ -10,6 +10,7 @@ struct LinkImportInput final {
     std::string category;
     bool as_sfx = false;
     bool play_when_ready = true;
+    bool online_only = false;
 };
 class LinkImportWindow final {
 public:
@@ -28,6 +29,7 @@ private:
     HWND category_ = nullptr;
     HWND source_ = nullptr;
     HWND autoplay_ = nullptr;
+    HWND online_ = nullptr;
     HWND status_ = nullptr;
     HWND start_ = nullptr;
     HWND cancel_ = nullptr;

@@ -19,7 +19,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z.-]*$')]
-    [string]$Version = '0.3.2',
+    [string]$Version = '0.3.3',
 
     [ValidateSet('Release', 'Debug')]
     [string]$Configuration = 'Release',
