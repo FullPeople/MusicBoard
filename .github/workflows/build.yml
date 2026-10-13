@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: musicboard-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 jobs:
   windows:
     runs-on: windows-2022
@@ -21,6 +24,8 @@ jobs:
           repository: FullPeople/FullOffice
           ref: 184cd8ed6d0b561e66fa13572853082c04310d45
           path: .cache/shared-fulltools
+      - name: Verify public source digests and release signature
+        run: python tools/build_media_runtime.py --verify-sources-only
       - name: Configure
         run: cmake --preset windows-x64
       - name: Build

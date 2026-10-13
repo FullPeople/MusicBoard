@@ -66,24 +66,38 @@ def batch(name, lines, vcvars, msys, tools):
     subprocess.run(["cmd.exe", "/d", "/c", str(path)], check=True)
 
 
+def verify_signature(files, homedir):
+    git = Path(shutil.which("git") or "")
+    gpg = git.parent.parent / "usr/bin/gpg.exe"
+    homedir.mkdir(parents=True, exist_ok=True)
+    # Git's MSYS GPG requires forward slashes; backslashes can become a relative keyring path.
+    imported = subprocess.run([str(gpg), "--homedir", homedir.as_posix(), "--batch", "--import", files["ffmpeg-devel.asc"].as_posix()], capture_output=True)
+    verified = subprocess.run([str(gpg), "--homedir", homedir.as_posix(), "--batch", "--status-fd", "1", "--verify",
+        files["ffmpeg-9.0.2.tar.xz.asc"].as_posix(), files["ffmpeg-9.0.2.tar.xz"].as_posix()], capture_output=True)
+    if verified.returncode or b"VALIDSIG FCF986EA15E6E293A5644F10B4322F04D67658D8 " not in verified.stdout:
+        # Only this isolated public release key and public signature are inspected.
+        raise RuntimeError("FFmpeg source signature verification failed: " + json.dumps({
+            "gpg": str(gpg), "import_status": imported.returncode,
+            "import_details": imported.stderr.decode("utf-8", errors="replace"),
+            "verify_status": verified.returncode, "verify_details": verified.stderr.decode("utf-8", errors="replace"),
+            "public_signature_status": verified.stdout.decode("utf-8", errors="replace")}))
+    if imported.returncode:
+        print("Public key import reported a warning; the expected source signature independently verified.", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configure", action="store_true")
+    parser.add_argument("--verify-sources-only", action="store_true", help="Fetch and verify public release sources before compiling")
     parser.add_argument("--msys-dir", type=Path, help="Use an existing portable MSYS2 with bash and make")
     args = parser.parse_args()
     CACHE.mkdir(parents=True, exist_ok=True)
-    needed_tools = BUILD_TOOLS if args.msys_dir is None else [BUILD_TOOLS[-1]]
+    needed_tools = [] if args.verify_sources_only else BUILD_TOOLS if args.msys_dir is None else [BUILD_TOOLS[-1]]
     files = {item[0]: fetch(item) for item in SOURCES + needed_tools}
-    git = Path(shutil.which("git") or "")
-    gpg = git.parent.parent / "usr/bin/gpg.exe"
-    homedir = CACHE / "gpg"; homedir.mkdir(exist_ok=True)
-    imported = subprocess.run([str(gpg), "--homedir", str(homedir), "--batch", "--import", str(files["ffmpeg-devel.asc"])], capture_output=True)
-    verified = subprocess.run([str(gpg), "--homedir", str(homedir), "--batch", "--status-fd", "1", "--verify",
-        str(files["ffmpeg-9.0.2.tar.xz.asc"]), str(files["ffmpeg-9.0.2.tar.xz"])], capture_output=True)
-    if verified.returncode or b"VALIDSIG FCF986EA15E6E293A5644F10B4322F04D67658D8 " not in verified.stdout:
-        raise RuntimeError("FFmpeg source signature verification failed")
-    if imported.returncode:
-        print("Public key import reported a warning; the expected source signature independently verified.", flush=True)
+    verify_signature(files, CACHE / "gpg")
+    if args.verify_sources_only:
+        print("Public source digests and release signature verified", flush=True)
+        return
     for archive, directory in (("ffmpeg-9.0.2.tar.xz", "ffmpeg-9.0.2"), ("lame_4.0.orig.tar.gz", "lame-4.0")):
         if not (CACHE / "sources" / directory).exists():
             with tarfile.open(files[archive]) as package:
