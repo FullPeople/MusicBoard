@@ -70,10 +70,15 @@ def verify_signature(files, homedir):
     git = Path(shutil.which("git") or "")
     gpg = git.parent.parent / "usr/bin/gpg.exe"
     homedir.mkdir(parents=True, exist_ok=True)
-    # Git's MSYS GPG requires forward slashes; backslashes can become a relative keyring path.
-    imported = subprocess.run([str(gpg), "--homedir", homedir.as_posix(), "--batch", "--import", files["ffmpeg-devel.asc"].as_posix()], capture_output=True)
-    verified = subprocess.run([str(gpg), "--homedir", homedir.as_posix(), "--batch", "--status-fd", "1", "--verify",
-        files["ffmpeg-9.0.2.tar.xz.asc"].as_posix(), files["ffmpeg-9.0.2.tar.xz"].as_posix()], capture_output=True)
+    cygpath = gpg.parent / "cygpath.exe"
+    if not cygpath.is_file():
+        raise RuntimeError("Git for Windows is missing its POSIX path conversion tool")
+    def posix(path):
+        return subprocess.check_output([str(cygpath), "-u", str(path)], encoding="utf-8").strip()
+    # MSYS GPG treats even D:/... as relative in a fresh hosted keyring; use its own absolute path format.
+    imported = subprocess.run([str(gpg), "--homedir", posix(homedir), "--batch", "--import", posix(files["ffmpeg-devel.asc"])], capture_output=True)
+    verified = subprocess.run([str(gpg), "--homedir", posix(homedir), "--batch", "--status-fd", "1", "--verify",
+        posix(files["ffmpeg-9.0.2.tar.xz.asc"]), posix(files["ffmpeg-9.0.2.tar.xz"])], capture_output=True)
     if verified.returncode or b"VALIDSIG FCF986EA15E6E293A5644F10B4322F04D67658D8 " not in verified.stdout:
         # Only this isolated public release key and public signature are inspected.
         raise RuntimeError("FFmpeg source signature verification failed: " + json.dumps({
