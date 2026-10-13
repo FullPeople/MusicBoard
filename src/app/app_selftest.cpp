@@ -111,6 +111,8 @@ int Application::self_test_online(const std::string& url){
     check(link_import_active_,"native import button starts online task");
     deadline=std::chrono::steady_clock::now()+std::chrono::seconds(35);
     while(link_import_active_&&std::chrono::steady_clock::now()<deadline){pump();Sleep(10);}
+    if(online_job_&&online_job_->ready()&&!online_job_->failure().empty())
+        std::printf("ONLINE_SOURCE_FAILURE %s\n",online_job_->failure().to_string().c_str());
     check(!link_import_active_&&!entries_.empty()&&entries_.back().prepared&&entries_.back().prepared->online,
         "native online input publishes prepared online entry");
     if(audio_ready_){

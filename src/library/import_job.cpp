@@ -1,4 +1,5 @@
 #include "library/import_job.h"
+#include "library/media_request_headers.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -18,12 +19,6 @@
 
 namespace musicboard {
 namespace {
-
-// 一个通用浏览器 UA。有些站点对空 UA 直接 403，这跟"要不要装作浏览器"
-// 是两件事 —— 这只是让基础反爬别把我们挡在门外。
-constexpr std::string_view kBrowserUserAgent =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36";
 
 [[nodiscard]] std::string directory_of_current_executable() {
     wchar_t buffer[32768]{};

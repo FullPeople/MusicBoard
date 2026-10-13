@@ -34,7 +34,7 @@ bool read_online_chunks(const OnlineAudioSource& source,AudioChunkConsumer& cons
         failure.set("online.decoder","Decoder missing: "+path_to_utf8(source.decoder));return false;
     }
     std::vector<std::string> arguments={"-nostdin","-hide_banner","-loglevel","error","-rw_timeout","15000000",
-        "-reconnect","1","-reconnect_streamed","1","-reconnect_delay_max","3","-protocol_whitelist","http,https,tcp,tls,crypto"};
+        "-reconnect","1","-reconnect_streamed","1","-reconnect_delay_max","3","-protocol_whitelist","http,https,httpproxy,tcp,tls,crypto"};
     if(!source.headers.empty()){arguments.push_back("-headers");arguments.push_back(source.headers);}
     arguments.insert(arguments.end(),{"-i",source.url});
     if(from>0){arguments.push_back("-ss");arguments.push_back(std::to_string(from));}

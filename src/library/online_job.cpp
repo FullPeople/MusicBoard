@@ -1,4 +1,5 @@
 #include "library/online_job.h"
+#include "library/media_request_headers.h"
 #include "library/url_classify.h"
 #include "core/path_utf8.h"
 #include <charconv>
@@ -43,6 +44,7 @@ void OnlineJob::run(std::string url,std::filesystem::path tools){
     }else{
         std::string metadata;
         std::vector<std::string> arguments={"--ignore-config","--no-plugin-dirs","--no-playlist","--no-warnings","--skip-download","--socket-timeout","15","--retries","2","-f","bestaudio/best",
+            "--user-agent",std::string(kBrowserUserAgent),
             "--print","URL=%(url)s","--print","DURATION=%(duration)s","--print","TITLE=%(title)s",
             "--print","AGENT=%(http_headers.User-Agent)s","--print","REFERER=%(http_headers.Referer)s"};
         std::error_code ec;if(std::filesystem::is_directory(tools/L"plugins",ec)){
@@ -59,6 +61,8 @@ void OnlineJob::run(std::string url,std::filesystem::path tools){
             else if(line.starts_with("AGENT=")&&line.substr(6)!="NA")source.headers+="User-Agent: "+line.substr(6)+"\r\n";
             else if(line.starts_with("REFERER=")&&line.substr(8)!="NA")source.headers+="Referer: "+line.substr(8)+"\r\n";
         }
+        if(source.headers.find("User-Agent: ")==std::string::npos)
+            source.headers="User-Agent: "+std::string(kBrowserUserAgent)+"\r\n"+source.headers;
     }
     if(url_is_well_formed(source.url)&&(!std::isfinite(duration)||duration<=0)&&classify_url(url).kind!=ImportSourceKind::direct_http){
         std::string metadata;std::vector<std::string> arguments={"-v","error","-rw_timeout","15000000"};

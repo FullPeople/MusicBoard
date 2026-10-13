@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 import uuid
 
@@ -31,14 +32,17 @@ CASES = {
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--case", choices=CASES, action="append")
     parser.add_argument("--timeout", type=float, default=75)
+    parser.add_argument("--output-root", type=Path)
     args = parser.parse_args()
     exe = args.exe.resolve(strict=True)
     root = Path(__file__).resolve().parents[1]
-    out = root / "artifacts/public-link-tests" / uuid.uuid4().hex
+    output_root = args.output_root.resolve() if args.output_root else root / "artifacts/public-link-tests"
+    out = output_root / uuid.uuid4().hex
     library = out / "library"
     for part in ("BGM", "SFX"):
         (library / part).mkdir(parents=True)
@@ -144,6 +148,9 @@ def main():
         except subprocess.TimeoutExpired:
             process.terminate()
             process.wait(timeout=5)
+        (out / "execution.json").write_text(json.dumps({"OwnedPid": process.pid,
+            "ExitCode": process.returncode, "ProcessExited": process.poll() is not None,
+            "CompletedCases": len(results), "RequestedCases": len(args.case or CASES)}, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":
