@@ -1,4 +1,4 @@
-MusicBoard 0.3.3
+MusicBoard
 ===============
 
 A native Windows soundboard for tabletop sessions. No music or sound effects are included.
