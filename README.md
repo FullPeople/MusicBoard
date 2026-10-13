@@ -14,6 +14,8 @@ on one deck and trigger independent effects from four decks or a grid of DJ pads
 - CN/EN switching, per-monitor DPI support, always-on-top, and a compact music-only panel.
 - Short audio is preloaded in full; long tracks preload their first two seconds and stream through
   bounded buffers. Loading progress is visible and waveform extraction stays on demand.
+- Version 0.3.3 offers direct online playback in the link-import dialog, alongside download for
+  offline playback. Online entries use bounded buffers and last for the current session.
 
 ## Download and use
 
@@ -21,6 +23,13 @@ Download the Windows x64 ZIP from [Releases](https://github.com/FullPeople/Music
 Extract the whole archive, then run `MusicBoardSetup.exe` to install for the current user,
 or launch `MusicBoard.exe` directly. Choose **EN** next to the pin button for English.
 No administrator rights or Visual C++ runtime installation is required.
+
+The [0.3.3 Windows development release](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.3)
+also provides a single-file installer. Actual ordinary upgrade/uninstall checks (7) and signed
+public HTTPS update checks (17) passed with generated fixtures and preserved settings. Generated
+HLS VOD and native link-import checks passed locally. More public platform links, slow networks,
+interruption recovery and macOS remain under development; login, region restrictions and expired
+or indefinite-duration sources may prevent playback.
 
 Choose a local library with this structure:
 
