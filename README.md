@@ -1,6 +1,6 @@
 # MusicBoard
 
-[简体中文](README.zh-CN.md) · [Download for Windows](https://github.com/FullPeople/MusicBoard/releases/latest)
+[简体中文](README.zh-CN.md) · [Windows development release](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.4)
 
 A native Windows music and sound-effects board for tabletop sessions. Keep background music
 on one deck and trigger independent effects from four decks or a grid of DJ pads.
@@ -14,8 +14,9 @@ on one deck and trigger independent effects from four decks or a grid of DJ pads
 - CN/EN switching, per-monitor DPI support, always-on-top, and a compact music-only panel.
 - Short audio is preloaded in full; long tracks preload their first two seconds and stream through
   bounded buffers. Loading progress is visible and waveform extraction stays on demand.
-- Version 0.3.3 offers direct online playback in the link-import dialog, alongside download for
-  offline playback. Online entries use bounded buffers and last for the current session.
+- Link imports offer direct online playback alongside download for offline playback. Version
+  0.3.4 improves first-playback continuity and platform transfers. Online entries use bounded
+  buffers and last for the current session.
 
 ## Download and use
 
@@ -24,12 +25,13 @@ Extract the whole archive, then run `MusicBoardSetup.exe` to install for the cur
 or launch `MusicBoard.exe` directly. Choose **EN** next to the pin button for English.
 No administrator rights or Visual C++ runtime installation is required.
 
-The [0.3.3 Windows development release](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.3)
-also provides a single-file installer. Actual ordinary upgrade/uninstall checks (7) and signed
-public HTTPS update checks (17) passed with generated fixtures and preserved settings. Generated
-HLS VOD and native link-import checks passed locally. More public platform links, slow networks,
-interruption recovery and macOS remain under development; login, region restrictions and expired
-or indefinite-duration sources may prevent playback.
+The [0.3.4 Windows development release](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.4)
+provides a single-file installer. The final package passed 10 ordinary upgrade, launch and uninstall
+checks and 17 signed public HTTPS update checks with preserved settings and an owned library.
+Seven public samples passed 63 actual playback checks; authored WAV and MP3 resumed after an
+eight-second outage. NetEase and Kuwo samples are previews. See the [validation record](docs/NETWORK-VALIDATION-20261014.md)
+for failures and limits. Longer outages, all songs and macOS remain under development; login,
+payment, regional restrictions, expired URLs and indefinite-duration sources may prevent playback.
 
 Choose a local library with this structure:
 
@@ -68,7 +70,7 @@ ctest --preset release --output-on-failure
 The main binary is `build/windows-x64/Release/musicboard.exe`. Package it with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.2.0
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.3.4
 ```
 
 The source uses C++20, Win32, Direct2D/DirectWrite/DirectComposition and XAudio2.
