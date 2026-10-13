@@ -119,6 +119,7 @@ int Application::self_test_online(const std::string& url){
         deadline=std::chrono::steady_clock::now()+std::chrono::seconds(4);
         while(std::chrono::steady_clock::now()<deadline){pump();Sleep(10);}
         const auto state=engine_.slot_state(AudioBus::bgm,bgm_slot_);
+        std::printf("ONLINE_PLAYBACK_POSITION seconds=%.6f in_use=%d\n",state.position_seconds,state.in_use?1:0);
         check(state.in_use&&state.position_seconds>3,"application playback crosses the streaming head");
         clear_playback(false,false);check(!engine_.slot_state(AudioBus::bgm,bgm_slot_).in_use,"application stop ends online playback");
     }else std::printf("SKIP application online audio output: no device\n");

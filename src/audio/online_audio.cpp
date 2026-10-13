@@ -6,6 +6,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <thread>
 
 namespace musicboard {
@@ -100,19 +103,132 @@ bool read_online_chunks(const OnlineAudioSource& source,AudioChunkConsumer& cons
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 }
+// A newly prepared entry retains one decoder until its first playback takes
+// ownership. At most eight native read chunks wait behind the two-second head.
+// Unused entries stop their decoder after ten seconds rather than retaining an
+// idle process for every online entry in the library.
+class OnlineAudioSession final : private AudioChunkConsumer {
+public:
+    explicit OnlineAudioSession(OnlineAudioSource source) : source_(std::move(source)) {
+        worker_=std::thread([this] {
+            Failure failure;
+            const bool ok=read_online_chunks(source_,*this,failure,&cancelled_);
+            const std::lock_guard lock(mutex_);
+            if(!ok&&!cancelled_)failure_=std::move(failure);
+            ended_=true;wake_.notify_all();
+        });
+    }
+    ~OnlineAudioSession() override { cancel(); }
+    bool take_head(std::vector<int16_t>& head,Failure& failure,const std::atomic<bool>* cancelled) {
+        std::unique_lock lock(mutex_);
+        if(cancelled&&cancelled->load()) {
+            lock.unlock();cancel();failure.set("audio.cancelled","Online preparation cancelled");return false;
+        }
+        while(!head_ready_&&!ended_) {
+            if(cancelled&&cancelled->load()) {
+                lock.unlock();cancel();failure.set("audio.cancelled","Online preparation cancelled");return false;
+            }
+            wake_.wait_for(lock,std::chrono::milliseconds(20));
+        }
+        if(cancelled&&cancelled->load()) {
+            lock.unlock();cancel();failure.set("audio.cancelled","Online preparation cancelled");return false;
+        }
+        if(!failure_.empty()) { failure=failure_;return false; }
+        if(head_.empty()) { failure.set("online.decode","Online source did not produce audio");return false; }
+        head_frames_=head_.size()/2;
+        head=std::move(head_);head_ready_=true;
+        return true;
+    }
+    bool claim(double from) {
+        const std::lock_guard lock(mutex_);
+        if(claimed_||cancelled_||!head_ready_||!std::isfinite(from)||from<0||
+            std::abs(from-static_cast<double>(head_frames_)/48000)>1.0/48000)return false;
+        claimed_=true;wake_.notify_all();return true;
+    }
+    bool read_tail(AudioChunkConsumer& consumer,Failure& failure,const std::atomic<bool>* cancelled) {
+        for(;;) {
+            std::vector<int16_t> block;
+            {
+                std::unique_lock lock(mutex_);
+                while(queue_.empty()&&!ended_) {
+                    if(cancelled&&cancelled->load()) {
+                        lock.unlock();cancel();failure.set("audio.cancelled","Online playback cancelled");return false;
+                    }
+                    wake_.wait_for(lock,std::chrono::milliseconds(20));
+                }
+                if(queue_.empty()) {
+                    if(!failure_.empty()){failure=failure_;return false;}
+                    return true;
+                }
+                block=std::move(queue_.front());queue_.pop_front();wake_.notify_all();
+            }
+            if((cancelled&&cancelled->load())||consumer.finished()) {
+                cancel();
+                if(cancelled&&cancelled->load()){failure.set("audio.cancelled","Online playback cancelled");return false;}
+                return true;
+            }
+            if(!consumer.consume(AudioFormat{48000,2,16},block.data(),block.size()/2,failure)) {cancel();return false;}
+        }
+    }
+private:
+    bool finished() const noexcept override {
+        const std::lock_guard lock(mutex_);
+        if(head_ready_&&!claimed_&&ready_at_!=std::chrono::steady_clock::time_point{}&&
+            std::chrono::steady_clock::now()-ready_at_>std::chrono::seconds(10))cancelled_=true;
+        return cancelled_;
+    }
+    void cancel() {
+        cancelled_=true;wake_.notify_all();
+        if(worker_.joinable())worker_.join();
+    }
+    bool consume(const AudioFormat&,const int16_t* samples,size_t frames,Failure& failure) override {
+        std::unique_lock lock(mutex_);
+        size_t count=frames*2;
+        if(!head_ready_) {
+            const size_t prefix=std::min(count,192000-head_.size());
+            head_.insert(head_.end(),samples,samples+prefix);samples+=prefix;count-=prefix;
+            if(head_.size()==192000){head_ready_=true;ready_at_=std::chrono::steady_clock::now();wake_.notify_all();}
+        }
+        while(count) {
+            while(queue_.size()==8&&!cancelled_) {
+                if(!claimed_&&std::chrono::steady_clock::now()-ready_at_>std::chrono::seconds(10))cancelled_=true;
+                wake_.wait_for(lock,std::chrono::milliseconds(20));
+            }
+            if(cancelled_){failure.set("audio.cancelled","Online decoder cancelled");return false;}
+            const size_t part=std::min<size_t>(count,8192);
+            queue_.emplace_back(samples,samples+part);samples+=part;count-=part;wake_.notify_all();
+        }
+        return true;
+    }
+    OnlineAudioSource source_;
+    std::thread worker_;
+    mutable std::atomic<bool> cancelled_{false};
+    mutable std::mutex mutex_;
+    std::condition_variable wake_;
+    std::vector<int16_t> head_;
+    std::deque<std::vector<int16_t>> queue_;
+    size_t head_frames_=0;
+    bool head_ready_=false,ended_=false,claimed_=false;
+    std::chrono::steady_clock::time_point ready_at_{};
+    Failure failure_;
+};
+
+bool read_prepared_online_chunks(const PreparedAudio& prepared,AudioChunkConsumer& consumer,
+    Failure& failure,const std::atomic<bool>* cancelled,double from) {
+    if(cancelled&&cancelled->load()){failure.set("audio.cancelled","Online playback cancelled");return false;}
+    if(prepared.online_session&&prepared.online_session->claim(from))
+        return prepared.online_session->read_tail(consumer,failure,cancelled);
+    return read_online_chunks(*prepared.online,consumer,failure,cancelled,from);
+}
+
 bool prepare_online_audio(const OnlineAudioSource& source,double duration,std::shared_ptr<const PreparedAudio>& prepared,
     Failure& failure,const std::atomic<bool>* cancelled){
     prepared.reset();if(!std::isfinite(duration)||duration<=0){failure.set("online.duration","Online source requires a finite duration");return false;}
     auto value=std::make_shared<PreparedAudio>();auto online=std::make_shared<OnlineAudioSource>(source);online->duration_seconds=duration;value->online=online;
     value->head.format={48000,2,16};value->total_frames=static_cast<uint64_t>(duration*48000);value->head.backend="ffmpeg_online";
-    struct Prefix final:AudioChunkConsumer{
-        PreparedAudio& audio;explicit Prefix(PreparedAudio& a):audio(a){}
-        bool finished()const noexcept override{return audio.head.samples.size()>=192000;}
-        bool consume(const AudioFormat&,const int16_t* samples,size_t frames,Failure&)override{
-            size_t count=std::min<size_t>(frames*2,192000-audio.head.samples.size());audio.head.samples.insert(audio.head.samples.end(),samples,samples+count);return true;
-        }
-    } prefix(*value);
-    if(!read_online_chunks(*online,prefix,failure,cancelled))return false;
+    auto session=std::make_shared<OnlineAudioSession>(*online);
+    if(!session->take_head(value->head.samples,failure,cancelled))return false;
+    value->online_session=std::move(session);
     value->head.duration_seconds=static_cast<double>(value->head.samples.size()/2)/48000;
     prepared=std::move(value);return true;
 }

@@ -13,4 +13,6 @@ struct OnlineAudioSource final {
     Failure& failure, const std::atomic<bool>* cancelled = nullptr, double from_seconds = 0.0);
 [[nodiscard]] bool prepare_online_audio(const OnlineAudioSource& source, double duration,
     std::shared_ptr<const PreparedAudio>& prepared, Failure& failure, const std::atomic<bool>* cancelled = nullptr);
+[[nodiscard]] bool read_prepared_online_chunks(const PreparedAudio& prepared, AudioChunkConsumer& consumer,
+    Failure& failure, const std::atomic<bool>* cancelled, double from_seconds);
 }

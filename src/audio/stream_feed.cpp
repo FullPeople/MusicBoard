@@ -76,7 +76,7 @@ bool StreamFeed::consume(const AudioFormat& format, const std::int16_t* samples,
 void StreamFeed::run(double from, bool loop) {
     Failure failure;
     do {
-        const bool read = audio_->online ? read_online_chunks(*audio_->online, *this, failure, &cancelled_, from)
+        const bool read = audio_->online ? read_prepared_online_chunks(*audio_, *this, failure, &cancelled_, from)
                                         : read_audio_chunks(audio_->path, *this, failure, &cancelled_, from);
         if (!read || !submit(failure)) break;
         from = 0.0;

@@ -38,6 +38,7 @@ jobs:
         run: |
           Copy-Item -LiteralPath '.cache/media-tools' -Destination 'build/windows-x64/Release/media-tools' -Recurse
           python tools/verify_online_audio.py
+          python tools/verify_online_handoff_delay.py --exe build/windows-x64/Release/musicboard.exe --fixture artifacts/online-validation/tone.wav --output-root artifacts/online-handoff-delay
       - name: Build native update helper
         shell: pwsh
         run: |
@@ -47,7 +48,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Update helper build failed' }
           Copy-Item -LiteralPath '.cache/update-helper/Release/FullToolsUpdater.exe' -Destination 'build/windows-x64/Release/FullToolsUpdater.exe'
       - name: Package
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.3.3
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.3.4
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: MusicBoard-windows-x64
@@ -59,4 +60,6 @@ jobs:
           path: |
             artifacts/online-validation/report.json
             artifacts/online-validation/*.log
+            artifacts/online-handoff-delay/**/*.json
+            artifacts/online-handoff-delay/**/*.log
           if-no-files-found: warn

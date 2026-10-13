@@ -32,6 +32,15 @@ int wmain(int argc,wchar_t** argv){
     failure.clear();std::shared_ptr<const PreparedAudio> prepared;
     const bool ready=prepare_online_audio(source,30.0,prepared,failure);
     r.check_eq(ready&&prepared->online&&prepared->head.samples.size()==192000&&!prepared->complete,"Online preparation retains only two seconds",failure.to_string());
+    if(ready){
+        failure.clear();Collect continued;continued.limit=48000*3*2;
+        const bool resumed=read_prepared_online_chunks(*prepared,continued,failure,nullptr,2.0);
+        const size_t head=prepared->head.samples.size();
+        r.check_eq(resumed&&continued.samples.size()==continued.limit&&reference.samples.size()==head+continued.samples.size()&&
+            std::equal(prepared->head.samples.begin(),prepared->head.samples.end(),reference.samples.begin())&&
+            std::equal(continued.samples.begin(),continued.samples.end(),reference.samples.begin()+head),
+            "Prepared decoder continuation preserves exact PCM without duplicated or missing frames",failure.to_string());
+    }
     failure.clear();std::atomic<bool> cancelled{true};Collect unused;
     const auto began=std::chrono::steady_clock::now();
     r.check_eq(!read_online_chunks(source,unused,failure,&cancelled)&&failure.code=="audio.cancelled"&&std::chrono::steady_clock::now()-began<std::chrono::seconds(2),"Cancellation ends owned decoder promptly",failure.to_string());

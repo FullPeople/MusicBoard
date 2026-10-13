@@ -6,6 +6,7 @@
 
 namespace musicboard {
 struct OnlineAudioSource;
+class OnlineAudioSession;
 
 inline constexpr double preload_head_seconds = 2.0;
 
@@ -18,6 +19,7 @@ struct PreparedAudio final {
     std::uint64_t total_frames = 0;
     bool complete = false;
     std::shared_ptr<const OnlineAudioSource> online;
+    std::shared_ptr<OnlineAudioSession> online_session;
     [[nodiscard]] double duration() const noexcept {
         return static_cast<double>(total_frames) / head.format.sample_rate;
     }
