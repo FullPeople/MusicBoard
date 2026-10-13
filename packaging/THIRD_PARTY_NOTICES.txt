@@ -55,14 +55,15 @@ yt-dlp 2026.08.19 is distributed unmodified as a separate executable. Its
 license and third-party notices are included in media-tools/licenses.
 Project: https://github.com/yt-dlp/yt-dlp
 
-FFmpeg n9.0.2-27-g7e93014c5b-20261012, GPL shared Windows build by BtbN,
-is run as a separate process for audio conversion. Its GPLv3 text is included
-in media-tools/licenses/LICENSE.txt. Component URLs, versions and file hashes
-are recorded in media-tools/provenance.json. The corresponding source bundle
-must accompany a public release; a link to upstream binaries alone is not a
-substitute for that bundle.
+FFmpeg 9.0.2 is built as shared LGPL 2.1+ libraries, with LAME 4.0 for MP3
+encoding. The source-matched build is invoked as a separate conversion
+process. License texts are included in media-tools/licenses. Original source
+archives, release verification materials and build recipes are included in
+media-tools/sources/MusicBoard-media-corresponding-source.zip. URLs, versions,
+configure options and file hashes are recorded in media-tools/provenance.json.
+Users may rebuild or replace this component with a compatible runtime.
 Project: https://ffmpeg.org/
-Build project: https://github.com/BtbN/FFmpeg-Builds
+MP3 encoder: https://lame.sourceforge.io/
 
 The FullTools single-track adapters in media-tools/plugins are MusicBoard
 source code under the root LICENSE.txt. They request public playback URLs and

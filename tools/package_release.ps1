@@ -19,7 +19,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z.-]*$')]
-    [string]$Version = '0.3.1',
+    [string]$Version = '0.3.2',
 
     [ValidateSet('Release', 'Debug')]
     [string]$Configuration = 'Release',
@@ -170,6 +170,10 @@ Assert-FileExists (Join-Path $mediaTools 'ffmpeg.exe')
 Assert-FileExists (Join-Path $mediaTools 'ffprobe.exe')
 Assert-FileExists (Join-Path $mediaTools 'licenses\yt-dlp-UNLICENSE.txt')
 Assert-FileExists (Join-Path $mediaTools 'licenses\yt-dlp-THIRD_PARTY_LICENSES.txt')
+Assert-FileExists (Join-Path $mediaTools 'licenses\FFmpeg-LGPL-2.1.txt')
+Assert-FileExists (Join-Path $mediaTools 'sources\MusicBoard-media-corresponding-source.zip')
+& python (Join-Path $repositoryRoot 'tools\verify_media_runtime.py') $mediaTools
+if ($LASTEXITCODE -ne 0) { throw 'Media runtime provenance verification failed; package not released' }
 Copy-Item -LiteralPath $mediaTools -Destination (Join-Path $packageDirectory 'media-tools') -Recurse
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'media-plugins') `
     -Destination (Join-Path $packageDirectory 'media-tools\plugins') -Recurse

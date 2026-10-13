@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -o pipefail
+cl.exe "$@" 2>&1 | sed -E 's/^.*Microsoft/Microsoft/; s/^.*:[[:space:]]+([A-Za-z]:\\)/Note: including file: \1/'
