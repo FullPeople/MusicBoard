@@ -19,7 +19,11 @@ def main():
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--decoder", action="store_true")
+    parser.add_argument("--tools", type=Path)
     args = parser.parse_args()
+    if args.decoder and args.tools is None:
+        parser.error("--decoder requires --tools")
     exe = args.exe.resolve(strict=True)
     data = args.fixture.resolve(strict=True).read_bytes()
     out = args.output_root.resolve() / uuid.uuid4().hex
@@ -72,8 +76,10 @@ def main():
     thread.start()
     try:
         with (out / "native.log").open("wb") as log:
-            process = subprocess.Popen([str(exe), "--library", str(out / "library"), "--selftest-online",
-                f"http://127.0.0.1:{server.server_port}/tone.wav"],
+            url = f"http://127.0.0.1:{server.server_port}/tone.wav"
+            command = [str(exe), str(args.tools.resolve(strict=True)), url, str(args.fixture.resolve(strict=True))] if args.decoder else \
+                [str(exe), "--library", str(out / "library"), "--selftest-online", url]
+            process = subprocess.Popen(command,
                 env=dict(os.environ, LOCALAPPDATA=str(out / "profile"), no_proxy="127.0.0.1", NO_PROXY="127.0.0.1"),
                 stdout=log, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
             try:
@@ -88,13 +94,18 @@ def main():
         server.server_close()
         thread.join(timeout=5)
     lines = (out / "native.log").read_text(encoding="utf-8", errors="replace").splitlines()
-    checks = {label: "PASS " + label in lines for label in EXPECTED}
+    labels = ("Native online preparation succeeds on delayed source", "Prepared head retains exactly two seconds",
+        "Continuation arrives without another delayed connection", "Prepared head and continuation match independent local PCM") if args.decoder else EXPECTED
+    checks = {label: "PASS " + label in lines for label in labels}
     checks["NativeAudioOutputNotSkipped"] = not any(line.startswith("SKIP ") for line in lines)
     checks["NoDownloadedLibraryFiles"] = not any(p.is_file() for p in (out / "library").rglob("*"))
+    if args.decoder:
+        checks["NoAdditionalDelayedConnection"] = len(events) <= 4
     report = {"Passed": code == 0 and all(checks.values()), "Checks": checks, "ExitCode": code,
         "OwnedPid": process.pid, "HTTPEvents": events,
         "PlaybackPosition": [line for line in lines if line.startswith("ONLINE_PLAYBACK_POSITION")],
-        "Scope": "Native online import and XAudio2 after authored delay on the third and subsequent media requests; original 4-second observation and >3-second playback requirement unchanged"}
+        "Scope": "Decoder continuation and independent PCM after owned delay; no claim of audio-device playback" if args.decoder else
+            "Native online import and XAudio2 after authored delay on the third and subsequent media requests; original 4-second observation and >3-second playback requirement unchanged"}
     (out / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps({"Passed": report["Passed"], "HTTPEvents": events,
         "PlaybackPosition": report["PlaybackPosition"], "Evidence": str(out / "report.json")}), flush=True)

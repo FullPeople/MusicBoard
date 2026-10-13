@@ -38,7 +38,7 @@ jobs:
         run: |
           Copy-Item -LiteralPath '.cache/media-tools' -Destination 'build/windows-x64/Release/media-tools' -Recurse
           python tools/verify_online_audio.py
-          python tools/verify_online_handoff_delay.py --exe build/windows-x64/Release/musicboard.exe --fixture artifacts/online-validation/tone.wav --output-root artifacts/online-handoff-delay
+          python tools/verify_online_handoff_delay.py --decoder --exe build/windows-x64/Release/online_handoff_tests.exe --tools .cache/media-tools --fixture artifacts/online-validation/tone.wav --output-root artifacts/online-handoff-delay
       - name: Build native update helper
         shell: pwsh
         run: |
