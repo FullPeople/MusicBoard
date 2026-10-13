@@ -1,5 +1,6 @@
 """Owned HTTP audio, exact streaming boundary, cancellation and application input."""
 from pathlib import Path
+import argparse
 import functools
 import http.server
 import json
@@ -8,29 +9,41 @@ import os
 import struct
 import subprocess
 import threading
+import time
 import wave
 
 root=Path(__file__).resolve().parents[1]
-out=root/'artifacts/online-validation'
+parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,default=root/'artifacts/online-validation')
+out=parser.parse_args().output.resolve()
+if not out.is_relative_to((root/'artifacts').resolve()):raise RuntimeError('Online validation output must stay inside owned artifacts')
 out.mkdir(parents=True,exist_ok=False)
 with wave.open(str(out/'tone.wav'),'wb') as audio:
     audio.setnchannels(2);audio.setsampwidth(2);audio.setframerate(48000)
     for second in range(30):
         audio.writeframes(b''.join(struct.pack('<hh',*(int(2500*math.sin(2*math.pi*733*(second*48000+i)/48000)),)*2) for i in range(48000)))
 tools=root/'.cache/media-tools'
+with wave.open(str(out/'tone.wav'),'rb') as original:
+    params=original.getparams();frames=original.readframes(48000)
+with wave.open(str(out/'short.wav'),'wb') as short:
+    short.setparams(params);short.writeframes(frames)
 subprocess.run([str(tools/'ffmpeg.exe'),'-hide_banner','-loglevel','error','-i',str(out/'tone.wav'),'-c:a','libmp3lame',str(out/'tone.mp3')],check=True,timeout=30)
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self,*args):pass
     def copyfile(self,*args):
         try:super().copyfile(*args)
         except (ConnectionResetError,BrokenPipeError):pass
+    def do_GET(self):
+        if self.path=='/stall.wav':
+            self.send_response(200);self.send_header('Content-Type','audio/wav');self.send_header('Content-Length','999999');self.end_headers()
+            time.sleep(2);return
+        super().do_GET()
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Quiet,directory=str(out)))
 thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
 checks={}
 try:
     for name in ['tone.wav','tone.mp3']:
         with (out/(name+'.log')).open('wb') as log:
-            result=subprocess.run([str(root/'build/windows-x64/Release/online_audio_tests.exe'),str(tools),f'http://127.0.0.1:{server.server_port}/{name}'],stdout=log,stderr=subprocess.STDOUT,timeout=50)
+            result=subprocess.run([str(root/'build/windows-x64/Release/online_audio_tests.exe'),str(tools),f'http://127.0.0.1:{server.server_port}/{name}',f'http://127.0.0.1:{server.server_port}/short.wav',f'http://127.0.0.1:{server.server_port}/stall.wav'],stdout=log,stderr=subprocess.STDOUT,timeout=50)
         checks[name]=result.returncode==0
     library=out/'library';(library/'BGM').mkdir(parents=True);(library/'SFX').mkdir()
     profile=out/'isolated-localappdata';profile.mkdir()
