@@ -74,7 +74,9 @@ bool read_online_chunks(const OnlineAudioSource& source,AudioChunkConsumer& cons
     if(relayed)arguments.insert(arguments.end(),{"-protocol_whitelist","pipe","-i","pipe:0"});
     else{
         arguments.insert(arguments.end(),{"-rw_timeout","15000000","-reconnect","1","-reconnect_streamed","1",
-            "-reconnect_delay_max","3","-protocol_whitelist","http,https,httpproxy,tcp,tls,crypto"});
+            "-reconnect_on_network_error","1","-reconnect_on_http_error","408,429,500,502,503,504",
+            "-reconnect_delay_max","31","-reconnect_delay_total_max","60","-reconnect_max_retries","10",
+            "-protocol_whitelist","http,https,httpproxy,tcp,tls,crypto"});
         if(!source.headers.empty()){arguments.push_back("-headers");arguments.push_back(source.headers);}
         arguments.insert(arguments.end(),{"-i",source.url});
     }
@@ -155,8 +157,10 @@ bool read_online_chunks(const OnlineAudioSource& source,AudioChunkConsumer& cons
             }
             return true;
         }
-        if(std::chrono::steady_clock::now()-last>std::chrono::seconds(20)){
-            stopOwned(1);failure.set("online.timeout","No audio received for 20 seconds "+errors);return false;
+        // Allow a temporary outage to recover; cancellation is checked every loop.
+        // Healthy transfers do not wait, and permanent silence still ends finitely.
+        if(std::chrono::steady_clock::now()-last>std::chrono::seconds(60)){
+            stopOwned(1);failure.set("online.timeout","No audio received during the 60-second network recovery window "+errors);return false;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
