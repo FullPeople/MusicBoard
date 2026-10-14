@@ -44,7 +44,8 @@ if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
 $InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
 
 $registryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MusicBoard'
-$shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\MusicBoard.lnk'
+$shortcutName = (-join ([char]0x97F3, [char]0x4E50, [char]0x677F)) + '.lnk'
+$shortcut = Join-Path $env:APPDATA ('Microsoft\Windows\Start Menu\Programs\' + $shortcutName)
 # The smoke test must not overwrite an existing installation's registration.
 if ((Test-Path -LiteralPath $registryKey) -or (Test-Path -LiteralPath $shortcut)) {
     throw 'Existing MusicBoard registration or shortcut found; smoke test requires a clean registration.'
@@ -129,6 +130,7 @@ try {
 
     # ---------------------------------------------------------------- registry
     Check (Test-Path -LiteralPath $registryKey) 'uninstall entry was written'
+    Check (Test-Path -LiteralPath $shortcut -PathType Leaf) 'actual product start menu shortcut was written'
     if (Test-Path -LiteralPath $registryKey) {
         $properties = Get-ItemProperty -LiteralPath $registryKey
         # The product name is Chinese; spell it out as code points so this file
@@ -206,7 +208,7 @@ try {
     Check (Test-Path -LiteralPath $userData -PathType Leaf) `
         'user data outside the install root is untouched'
 
-    $shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\MusicBoard.lnk'
+    $shortcut = Join-Path $env:APPDATA ('Microsoft\Windows\Start Menu\Programs\' + $shortcutName)
     Check (-not (Test-Path -LiteralPath $shortcut)) 'start menu shortcut is gone'
 }
 finally {
@@ -214,7 +216,7 @@ finally {
     if (Test-Path -LiteralPath $registryKey) {
         Remove-Item -LiteralPath $registryKey -Recurse -Force -ErrorAction SilentlyContinue
     }
-    $shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\MusicBoard.lnk'
+    $shortcut = Join-Path $env:APPDATA ('Microsoft\Windows\Start Menu\Programs\' + $shortcutName)
     if (Test-Path -LiteralPath $shortcut) {
         Remove-Item -LiteralPath $shortcut -Force -ErrorAction SilentlyContinue
     }
