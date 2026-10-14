@@ -32,8 +32,8 @@ jobs:
         run: cmake --build --preset release
       - name: Test
         run: ctest --preset release --output-on-failure
-      - name: Build source-matched media runtime
-        run: python tools/fetch_media_tools.py --build-audio
+      - name: Reuse exact published source-matched runtime and verify every component
+        run: python tools/reuse_verified_media_runtime.py
       - name: Verify online audio and native import controls
         run: |
           Copy-Item -LiteralPath '.cache/media-tools' -Destination 'build/windows-x64/Release/media-tools' -Recurse
@@ -48,7 +48,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Update helper build failed' }
           Copy-Item -LiteralPath '.cache/update-helper/Release/FullToolsUpdater.exe' -Destination 'build/windows-x64/Release/FullToolsUpdater.exe'
       - name: Package
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.3.4
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.3.5
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: MusicBoard-windows-x64

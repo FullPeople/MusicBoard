@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(MusicBoard VERSION 0.3.4 LANGUAGES C CXX RC)
+project(MusicBoard VERSION 0.3.5 LANGUAGES C CXX RC)
 add_compile_definitions(MUSICBOARD_PRODUCT_VERSION="${PROJECT_VERSION}")
 
 if(NOT WIN32)
