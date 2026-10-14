@@ -1,6 +1,6 @@
 # 音乐板 MusicBoard
 
-[English](README.md) · [下载 Windows 开发版](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.4)
+[English](README.md) · [下载 Windows 开发版](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.5)
 
 用于跑团场景的 Windows 原生音乐与音效控制板。BGM 与 SFX 独立控制，支持四台唱盘和三列 DJ 按钮。
 
@@ -12,14 +12,14 @@
 - 分类、搜索、曲名前置标签、播放进度、独立音量和可配置快捷键。
 - CN/EN 即时切换并记住语言，支持 DPI 缩放、置顶及仅显示 BGM 的紧凑面板。
 - 短曲完整预载，长曲只预备前 2 秒并持续后台供音；波形按需加载。
-- 链接导入支持直接在线播放，也可下载入库后离线播放。0.3.4 改善首次播放的衔接与平台传输；在线曲目使用有限缓冲，仅在当前会话保留。
+- 链接导入支持直接在线播放，也可下载入库后离线播放。0.3.5 改善临时断网后的有限恢复；在线曲目使用有限缓冲，仅在当前会话保留。
 
 ## 使用
 
 从 [Releases](https://github.com/FullPeople/MusicBoard/releases) 下载 Windows x64 ZIP，完整解压后运行
 `MusicBoardSetup.exe` 安装，也可直接启动 `MusicBoard.exe`。不需要管理员权限或额外安装 VC++ 运行库。
 
-[0.3.4 Windows 开发版](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.4) 提供独立安装包。最终包的普通升级、启动与卸载 10 项，以及旧版经官网签名联网更新的 17 项实际检查通过，保留偏好和测试曲库。七个公开来源的 63 项实际播放检查通过，另有八秒断网后的 WAV／MP3 续传检查；[验证记录](docs/NETWORK-VALIDATION-20261014.md) 保留成功与失败的范围。网易和酷我样本仅为试听。需要登录、付费、区域限制、过期地址或无确定时长的来源可能无法使用；长期中断、所有歌曲和 macOS 仍在开发。
+[0.3.5 Windows 开发版](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.5) 提供独立安装包。最终包的普通升级、启动与卸载 10 项，以及旧版经官网签名联网更新的 17 项实际检查通过，保留偏好和测试曲库。七个公开来源的 63 项实际播放检查通过，另有组件在 30 秒断网后的 WAV／MP3 续传检查；组件、完整应用和公开升级的范围分别记录。[验证记录](docs/NETWORK-VALIDATION-20261014.md) 保留成功与失败。网易和酷我样本仅为试听。需要登录、付费、区域限制、过期地址或无确定时长的来源可能无法使用；播放中长期中断、所有歌曲和 macOS 仍在开发。
 
 首次启动选择曲库目录，例如：
 

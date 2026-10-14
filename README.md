@@ -1,6 +1,6 @@
 # MusicBoard
 
-[简体中文](README.zh-CN.md) · [Windows development release](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.4)
+[简体中文](README.zh-CN.md) · [Windows development release](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.5)
 
 A native Windows music and sound-effects board for tabletop sessions. Keep background music
 on one deck and trigger independent effects from four decks or a grid of DJ pads.
@@ -15,7 +15,7 @@ on one deck and trigger independent effects from four decks or a grid of DJ pads
 - Short audio is preloaded in full; long tracks preload their first two seconds and stream through
   bounded buffers. Loading progress is visible and waveform extraction stays on demand.
 - Link imports offer direct online playback alongside download for offline playback. Version
-  0.3.4 improves first-playback continuity and platform transfers. Online entries use bounded
+  0.3.5 improves bounded recovery after temporary network outages. Online entries use bounded
   buffers and last for the current session.
 
 ## Download and use
@@ -25,11 +25,12 @@ Extract the whole archive, then run `MusicBoardSetup.exe` to install for the cur
 or launch `MusicBoard.exe` directly. Choose **EN** next to the pin button for English.
 No administrator rights or Visual C++ runtime installation is required.
 
-The [0.3.4 Windows development release](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.4)
+The [0.3.5 Windows development release](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.5)
 provides a single-file installer. The final package passed 10 ordinary upgrade, launch and uninstall
 checks and 17 signed public HTTPS update checks with preserved settings and an owned library.
 Seven public samples passed 63 actual playback checks; authored WAV and MP3 resumed after an
-eight-second outage. NetEase and Kuwo samples are previews. See the [validation record](docs/NETWORK-VALIDATION-20261014.md)
+thirty-second outage in component tests. Final installed application, public playback and signed
+network upgrade results are recorded separately. NetEase and Kuwo samples are previews. See the [validation record](docs/NETWORK-VALIDATION-20261014.md)
 for failures and limits. Longer outages, all songs and macOS remain under development; login,
 payment, regional restrictions, expired URLs and indefinite-duration sources may prevent playback.
 
