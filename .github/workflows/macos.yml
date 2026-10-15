@@ -1,0 +1,35 @@
+name: Native macOS music board and installation image
+on:
+  push:
+    branches: [macos/musicboard-20261015]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build native app, bundled media tools and existing product icon
+        run: python3 tools/macos/build.py
+      - name: Exercise real native window, audio, preferences and HTTP downloads
+        run: python3 tools/macos/verify.py
+      - name: Prepare and verify actual installation disk image
+        run: python3 tools/macos/package.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: musicboard-macos-${{ matrix.runner }}-${{ github.run_id }}
+          path: |
+            artifacts/macos/*.json
+            artifacts/macos/*.txt
+            artifacts/macos/native-checks/*.json
+            artifacts/macos/native-checks/*.png
+            artifacts/macos/distribution/*
+          if-no-files-found: warn
+          retention-days: 14
