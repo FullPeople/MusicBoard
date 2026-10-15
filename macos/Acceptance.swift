@@ -116,8 +116,8 @@ import AVFoundation
                 let online = await until { !app.board.busy && app.board.current?.url.isFileURL == false && app.board.active.currentTime().seconds > 0.2 }
                 try check("OnlineDirectHTTPAudioActuallyAdvances", online && app.board.errorText == nil)
                 app.board.stopAll(); app.board.importLink(direct, offline: true)
-                let download = await until({ !app.board.busy }, timeout: 90)
-                try check("OfflineImportCreatesPlayableLocalAudio", download && app.board.current?.category == "Downloads" && app.board.current!.url.isFileURL && app.board.errorText == nil)
+                let download = await until({ app.board.errorText != nil || (!app.board.busy && app.board.current?.category == "Downloads" && app.board.active.currentTime().seconds > 0.2) }, timeout: 90)
+                try check("OfflineImportCreatesPlayableLocalAudio", download && app.board.current?.category == "Downloads" && app.board.current!.url.isFileURL && app.board.active.currentTime().seconds > 0.2 && app.board.errorText == nil)
                 let file = app.board.current!.url
                 try check("DownloadedAudioHasDecodableSamples", try AVAudioFile(forReading: file).length > 44100)
                 try check("OfflineCatalogPersists", fm.fileExists(atPath: app.board.profile.appendingPathComponent("downloads.json").path))
@@ -135,7 +135,7 @@ import AVFoundation
             }
             try check("ScreenshotEvidenceExists", fm.fileExists(atPath: output.appendingPathComponent("window.png").path))
         } catch { failure = error.localizedDescription }
-        let report: [String: Any] = ["Passed": failure == nil && !checks.isEmpty && checks.values.allSatisfy { $0 }, "Checks": checks, "Measurements": measurements, "Failure": failure as Any? ?? NSNull(), "Architecture": ProcessInfo.processInfo.machineHardwareName, "Scope": "Native macOS application window and real AVPlayer/decoder, generated tones and local HTTP audio/download. No private media. No physical speaker, Gatekeeper/Finder, multiple physical monitors or all public platform URL claim."]
+        let report: [String: Any] = ["Passed": failure == nil && !checks.isEmpty && checks.values.allSatisfy { $0 }, "Checks": checks, "Measurements": measurements, "Failure": failure as Any? ?? NSNull(), "LastError": app.board.errorText as Any? ?? NSNull(), "Architecture": ProcessInfo.processInfo.machineHardwareName, "Scope": "Native macOS application window and real AVPlayer/decoder, generated tones and local HTTP audio/download. No private media. No physical speaker, Gatekeeper/Finder, multiple physical monitors or all public platform URL claim."]
         do {
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("report.json"))
         } catch { fputs("Report write failed: \(error)\n", stderr) }

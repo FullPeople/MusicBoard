@@ -42,6 +42,7 @@ def main():
     with (OUT/'ffmpeg-build.txt').open('w') as log: run('make', '-j3', 'install', cwd=source, stdout=log, stderr=subprocess.STDOUT)
     for name in ['ffmpeg', 'ffprobe']: shutil.copy2(prefix/'bin'/name, tools/name)
     shutil.copy2(paths[1], tools/'yt-dlp'); (tools/'yt-dlp').chmod(0o755)
+    shutil.copytree(ROOT/'media-plugins',tools/'plugins')
     icons = OUT/'MusicBoard.iconset'; icons.mkdir()
     for size in [16,32,128,256,512]:
         for retina in [False,True]:

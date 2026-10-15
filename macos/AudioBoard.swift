@@ -339,7 +339,7 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
             let result = Result<Song, Error> {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 if offline {
-                    _ = try runTool(tools.appendingPathComponent("yt-dlp"), ["--ignore-config", "--no-playlist", "--no-progress", "--no-warnings", "--socket-timeout", "15", "--retries", "3", "--ffmpeg-location", tools.path, "-f", "bestaudio/best", "-x", "--audio-format", "m4a", "-o", folder.appendingPathComponent("%(title).100s.%(ext)s").path, "--", url.absoluteString], timeout: 600)
+                    _ = try runTool(tools.appendingPathComponent("yt-dlp"), ["--ignore-config", "--no-plugin-dirs", "--plugin-dirs", tools.appendingPathComponent("plugins").path, "--no-playlist", "--no-progress", "--no-warnings", "--socket-timeout", "15", "--retries", "3", "--ffmpeg-location", tools.path, "-f", "bestaudio/best", "-x", "--audio-format", "m4a", "-o", folder.appendingPathComponent("%(title).100s.%(ext)s").path, "--", url.absoluteString], timeout: 600)
                     let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).filter { $0.pathExtension == "m4a" }
                     guard let file = files.first, files.count == 1 else { throw BoardError.message("Download did not produce one playable audio file") }
                     return Song(url: file, title: file.deletingPathExtension().lastPathComponent, category: "Downloads", effect: false)
@@ -347,8 +347,11 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
                 if ["mp3", "m4a", "wav", "aac", "mp4", "m3u8"].contains(url.pathExtension.lowercased()) {
                     return Song(url: url, title: url.deletingPathExtension().lastPathComponent, category: "Online", effect: false)
                 }
-                let data = try runTool(tools.appendingPathComponent("yt-dlp"), ["--ignore-config", "--no-playlist", "--no-warnings", "--socket-timeout", "15", "--retries", "2", "--skip-download", "-j", "-f", "bestaudio[ext=m4a]/best[ext=mp4]/bestaudio", "--", url.absoluteString])
+                let data = try runTool(tools.appendingPathComponent("yt-dlp"), ["--ignore-config", "--no-plugin-dirs", "--plugin-dirs", tools.appendingPathComponent("plugins").path, "--no-playlist", "--no-warnings", "--socket-timeout", "15", "--retries", "2", "--skip-download", "-j", "-f", "bestaudio[ext=m4a]/best[ext=mp4]/bestaudio", "--", url.absoluteString])
                 guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any], let direct = json["url"] as? String, let stream = URL(string: direct), ["http", "https"].contains(stream.scheme ?? "") else { throw BoardError.message("No directly playable audio stream returned") }
+                if let headers = json["http_headers"] as? [String: String], headers.keys.contains(where: { $0.lowercased() == "referer" }) {
+                    throw BoardError.message("此来源需要附加请求头，请选择“下载并播放”。\nThis source needs additional request headers. Choose Download & Play.")
+                }
                 return Song(url: stream, title: json["title"] as? String ?? url.host!, category: "Online", effect: false)
             }
             DispatchQueue.main.async {

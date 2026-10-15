@@ -2,6 +2,14 @@ import AppKit
 import SwiftUI
 import AVFoundation
 
+final class OrbButton: NSButton {
+    override func mouseDown(with event: NSEvent) {
+        guard let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) else { return }
+        if next.type == .leftMouseDragged { window?.performDrag(with: event) }
+        else { performClick(nil) }
+    }
+}
+
 @MainActor final class MusicBoardApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var board: AudioBoard!
     var window: NSWindow!
@@ -41,7 +49,7 @@ import AVFoundation
         orb = NSPanel(contentRect: NSRect(x: 70, y: 120, width: 64, height: 64), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         orb.isOpaque = false; orb.backgroundColor = .clear; orb.hasShadow = true; orb.isMovableByWindowBackground = true
         orb.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]; orb.hidesOnDeactivate = false
-        let button = NSButton(image: NSApp.applicationIconImage, target: self, action: #selector(toggleWindow))
+        let button = OrbButton(image: NSApp.applicationIconImage, target: self, action: #selector(toggleWindow))
         button.imageScaling = .scaleProportionallyUpOrDown; button.isBordered = false; button.frame = NSRect(x: 0, y: 0, width: 64, height: 64)
         button.setAccessibilityIdentifier("record-orb")
         let menu = NSMenu()
