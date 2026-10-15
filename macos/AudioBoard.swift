@@ -129,7 +129,7 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
                 for case let file as URL in enumerator {
                     do {
                         let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-                        if values.isSymbolicLink == true { enumerator.skipDescendants(); continue }
+                        if values.isSymbolicLink == true { continue }
                         guard values.isRegularFile == true, allowed.contains(file.pathExtension.lowercased()) else { continue }
                         let parts = file.path.replacingOccurrences(of: url.path + "/", with: "").split(separator: "/").map(String.init)
                         let effect = parts.first?.uppercased() == "SFX"

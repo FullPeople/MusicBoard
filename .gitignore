@@ -18,6 +18,7 @@
 /.vs/
 /.vscode/
 /tools/__pycache__/
+**/__pycache__/
 *.user
 *.suo
 *.VC.db
