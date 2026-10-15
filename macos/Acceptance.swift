@@ -2,8 +2,12 @@ import AppKit
 import AVFoundation
 
 @MainActor func runAcceptance(output: URL, app: MusicBoardApp) {
-    Task { @MainActor in
+    Task { await performAcceptance(output: output, app: app) }
+}
+
+@MainActor func performAcceptance(output: URL, app: MusicBoardApp) async {
         var checks: [String: Bool] = [:]
+        var measurements: [String: Double] = [:]
         var failure: String?
         let fm = FileManager.default
         func check(_ name: String, _ value: Bool) throws {
@@ -60,7 +64,15 @@ import AVFoundation
             let decoded = try AVAudioFile(forReading: first.url)
             let probe = AVAudioPCMBuffer(pcmFormat: decoded.processingFormat, frameCapacity: 4096)!
             try decoded.read(into: probe)
-            try check("ActualDecoderProducesNonzeroPCM", probe.frameLength == 4096 && abs(probe.floatChannelData![0][100]) > 0.01)
+            var squares: Double = 0
+            for i in 0..<Int(probe.frameLength) { let sample = Double(probe.floatChannelData![0][i]); squares += sample * sample }
+            let rms = sqrt(squares / Double(probe.frameLength)); measurements["AuthoredToneDecodedRMS"] = rms
+            try check("ActualDecoderProducesNonzeroPCM", probe.frameLength == 4096 && rms > 0.11 && rms < 0.14)
+            let previous = app.board.active
+            app.board.play(Song(url: output.appendingPathComponent("missing-file.wav"), title: "Missing", category: "Fixture", effect: false))
+            let rejected = await until { app.board.errorText != nil }
+            try check("FailedIncomingAudioPreservesCurrentPlayback", rejected && app.board.active === previous && app.board.playing && previous.rate > 0)
+            app.board.errorText = nil
             app.board.togglePause(); await wait(0.2)
             let paused = app.board.active.currentTime().seconds; await wait(0.2)
             try check("PauseStopsClock", !app.board.playing && abs(app.board.active.currentTime().seconds - paused) < 0.05)
@@ -123,13 +135,12 @@ import AVFoundation
             }
             try check("ScreenshotEvidenceExists", fm.fileExists(atPath: output.appendingPathComponent("window.png").path))
         } catch { failure = error.localizedDescription }
-        let report: [String: Any] = ["Passed": failure == nil && !checks.isEmpty && checks.values.allSatisfy { $0 }, "Checks": checks, "Failure": failure as Any? ?? NSNull(), "Architecture": ProcessInfo.processInfo.machineHardwareName, "Scope": "Native macOS application window and real AVPlayer/decoder, generated tones and local HTTP audio/download. No private media. No physical speaker, Gatekeeper/Finder, multiple physical monitors or all public platform URL claim."]
+        let report: [String: Any] = ["Passed": failure == nil && !checks.isEmpty && checks.values.allSatisfy { $0 }, "Checks": checks, "Measurements": measurements, "Failure": failure as Any? ?? NSNull(), "Architecture": ProcessInfo.processInfo.machineHardwareName, "Scope": "Native macOS application window and real AVPlayer/decoder, generated tones and local HTTP audio/download. No private media. No physical speaker, Gatekeeper/Finder, multiple physical monitors or all public platform URL claim."]
         do {
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("report.json"))
         } catch { fputs("Report write failed: \(error)\n", stderr) }
         app.board.stopAll()
         exit(failure == nil ? 0 : 1)
-    }
 }
 
 extension ProcessInfo {

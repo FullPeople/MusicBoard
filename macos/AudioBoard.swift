@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Combine
+import CryptoKit
 
 struct Song: Identifiable, Codable, Equatable {
     var id: String { url.absoluteString }
@@ -26,6 +27,31 @@ enum BoardError: LocalizedError {
     var errorDescription: String? { if case .message(let s) = self { return s }; return nil }
 }
 
+@MainActor func boardTimer(every interval: TimeInterval, _ action: @escaping @MainActor (Timer) -> Void) -> Timer {
+    Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { timer in
+        MainActor.assumeIsolated { action(timer) }
+    }
+}
+
+enum MediaTools {
+    static let lock = NSLock()
+    static var running: [Int32: Process] = [:]
+    static var closing = false
+    static func launch(_ process: Process) throws {
+        lock.lock(); defer { lock.unlock() }
+        if closing { throw BoardError.message("MusicBoard is closing") }
+        try process.run(); running[process.processIdentifier] = process
+    }
+    static func retire(_ process: Process) { lock.lock(); running.removeValue(forKey: process.processIdentifier); lock.unlock() }
+    static func close() {
+        lock.lock(); closing = true; let owned = Array(running.values); lock.unlock()
+        for process in owned where process.isRunning { process.terminate() }
+        let deadline = Date().addingTimeInterval(2)
+        while owned.contains(where: { $0.isRunning }) && Date() < deadline { Thread.sleep(forTimeInterval: 0.04) }
+        for process in owned where process.isRunning { kill(process.processIdentifier, SIGKILL) }
+    }
+}
+
 func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) throws -> Data {
     let process = Process()
     process.executableURL = url; process.arguments = arguments
@@ -34,7 +60,8 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
     let handle = try FileHandle(forWritingTo: log)
     defer { try? handle.close(); try? FileManager.default.removeItem(at: log) }
     process.standardOutput = handle; process.standardError = handle
-    try process.run()
+    try MediaTools.launch(process)
+    defer { MediaTools.retire(process) }
     let deadline = Date().addingTimeInterval(timeout)
     while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.08) }
     if process.isRunning {
@@ -75,9 +102,13 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
     private var timer: Timer?
     private var observedEnd: NSObjectProtocol?
     private var observedStatus: NSKeyValueObservation?
+    private var pendingStatus: NSKeyValueObservation?
+    private var pendingPlayer: AVPlayer?
+    private var effectObservers: [String: NSObjectProtocol] = [:]
+    private var pendingEffects: Set<String> = []
+    private var effectsGeneration = UUID()
     private var scanGeneration = UUID()
     private var loadGeneration = UUID()
-    private var lastSaved: BoardPreferences?
     let profile: URL
     let tools: URL
     let supported: Set<String> = ["mp3", "wav", "m4a", "aac", "aiff", "aif", "caf", "flac", "ogg", "opus", "webm", "mp4"]
@@ -91,7 +122,7 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
                 preferences = try JSONDecoder().decode(BoardPreferences.self, from: Data(contentsOf: path))
             }
         } catch { errorText = error.localizedDescription }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+        timer = boardTimer(every: 0.15) { [weak self] _ in
             guard let self = self else { return }
             let value = self.active.currentTime().seconds
             self.seconds = value.isFinite ? max(0, value) : 0
@@ -152,7 +183,16 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
 
     func playable(_ url: URL, completion: @escaping (Result<URL, Error>) -> Void) {
         guard ["ogg", "opus", "webm"].contains(url.pathExtension.lowercased()), url.isFileURL else { completion(.success(url)); return }
-        let output = profile.appendingPathComponent("decoded-\(UUID().uuidString).caf")
+        let cache = profile.appendingPathComponent("decoded")
+        let output: URL
+        do {
+            try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+            let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let key = url.path + ":\(values.fileSize ?? 0):\(values.contentModificationDate?.timeIntervalSince1970 ?? 0)"
+            let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+            output = cache.appendingPathComponent(digest + ".caf")
+            if FileManager.default.fileExists(atPath: output.path) { completion(.success(output)); return }
+        } catch { completion(.failure(error)); return }
         let executable = tools.appendingPathComponent("ffmpeg")
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result<URL, Error> {
@@ -171,24 +211,42 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
             guard let self = self, self.loadGeneration == token else { return }
             switch result {
             case .failure(let error): self.errorText = error.localizedDescription
-            case .success(let url): self.start(song, url: url)
+            case .success(let url):
+                let candidate = AVPlayer(url: url)
+                self.pendingPlayer = candidate
+                self.pendingStatus = candidate.currentItem?.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+                    DispatchQueue.main.async {
+                        guard let self = self, self.loadGeneration == token, self.pendingPlayer === candidate else { return }
+                        if item.status == .readyToPlay {
+                            self.pendingStatus = nil; self.pendingPlayer = nil
+                            self.start(song, player: candidate)
+                        } else if item.status == .failed {
+                            self.pendingStatus = nil; self.pendingPlayer = nil
+                            self.errorText = item.error?.localizedDescription ?? "Audio preparation failed"
+                        }
+                    }
+                }
             }
         }
     }
 
-    func start(_ song: Song, url: URL) {
-        let incoming = AVPlayer(url: url)
+    func start(_ song: Song, player incoming: AVPlayer) {
         let old = active; let oldWasPlaying = playing
         envelope?.invalidate(); outgoing?.pause(); outgoing = old
         if let token = observedEnd { NotificationCenter.default.removeObserver(token) }
         observedStatus = incoming.currentItem?.observe(\.status, options: [.new]) { [weak self] item, _ in
             guard item.status == .failed else { return }
-            DispatchQueue.main.async { self?.playing = false; self?.errorText = item.error?.localizedDescription ?? "Audio playback failed" }
+            DispatchQueue.main.async {
+                guard self?.active === incoming else { return }
+                self?.playing = false; self?.errorText = item.error?.localizedDescription ?? "Audio playback failed"
+            }
         }
         active = incoming; current = song; playing = true; seconds = 0
         observedEnd = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: incoming.currentItem, queue: .main) { [weak self, weak incoming] _ in
-            guard let self = self, let incoming = incoming else { return }
-            if self.preferences.loop { incoming.seek(to: .zero); incoming.play() } else { self.playing = false }
+            MainActor.assumeIsolated {
+                guard let self = self, let incoming = incoming else { return }
+                if self.preferences.loop { incoming.seek(to: .zero); incoming.play() } else { self.playing = false }
+            }
         }
         let volume = Float(preferences.volume)
         let crossfade = preferences.mix && oldWasPlaying
@@ -197,7 +255,7 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
         incoming.volume = 0
         if crossfade || !oldWasPlaying { incoming.play() }
         let start = ProcessInfo.processInfo.systemUptime; let oldVolume = old.volume
-        envelope = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self, weak incoming] timer in
+        envelope = boardTimer(every: 1.0 / 60) { [weak self, weak incoming] timer in
             guard let self = self, let incoming = incoming else { timer.invalidate(); return }
             let t = min(1, (ProcessInfo.processInfo.systemUptime - start) / span)
             if crossfade {
@@ -213,12 +271,13 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
 
     func togglePause() {
         guard current != nil else { return }
+        loadGeneration = UUID(); pendingStatus = nil; pendingPlayer?.pause(); pendingPlayer = nil
         envelope?.invalidate(); outgoing?.pause(); outgoing = nil
         if playing {
             playing = false
             if !preferences.fade { active.pause(); return }
             let player = active; let start = ProcessInfo.processInfo.systemUptime; let gain = player.volume
-            envelope = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            envelope = boardTimer(every: 1.0 / 60) { [weak self] timer in
                 let t = min(1, (ProcessInfo.processInfo.systemUptime - start) / 0.6)
                 player.volume = gain * Float(1 - t)
                 if t >= 1 { player.pause(); timer.invalidate(); self?.envelope = nil }
@@ -226,11 +285,22 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
         } else { active.volume = Float(preferences.volume); active.play(); playing = true }
     }
     func stopMusic() {
-        loadGeneration = UUID(); envelope?.invalidate(); envelope = nil
+        loadGeneration = UUID(); pendingStatus = nil; pendingPlayer?.pause(); pendingPlayer = nil
+        envelope?.invalidate(); envelope = nil
         active.pause(); outgoing?.pause(); outgoing = nil
+        if let observer = observedEnd { NotificationCenter.default.removeObserver(observer) }; observedEnd = nil
+        observedStatus = nil
         active.replaceCurrentItem(with: nil); current = nil; playing = false; seconds = 0; duration = 0
     }
-    func stopAll() { stopMusic(); for player in effects.values { player.pause() }; effects.removeAll() }
+    func stopAll() {
+        stopMusic(); effectsGeneration = UUID(); pendingEffects.removeAll()
+        for id in Array(effects.keys) { stopEffect(id) }
+    }
+    func stopEffect(_ id: String) {
+        pendingEffects.remove(id)
+        if let player = effects.removeValue(forKey: id) { player.pause() }
+        if let observer = effectObservers.removeValue(forKey: id) { NotificationCenter.default.removeObserver(observer) }
+    }
     func seek(_ seconds: Double) { active.seek(to: CMTime(seconds: max(0, min(seconds, duration)), preferredTimescale: 600)) }
     func updateVolumes() {
         if envelope == nil { active.volume = Float(preferences.volume) }
@@ -238,18 +308,21 @@ func runTool(_ url: URL, _ arguments: [String], timeout: TimeInterval = 120) thr
         save()
     }
     func playEffect(_ song: Song) {
-        if let player = effects[song.id] { player.pause(); effects.removeValue(forKey: song.id); return }
-        guard effects.count < 4 else { errorText = text("最多同时播放 4 个音效，请先停止一个。", "Stop one effect before starting a fifth."); return }
+        if effects[song.id] != nil || pendingEffects.contains(song.id) { stopEffect(song.id); return }
+        guard effects.count + pendingEffects.count < 4 else { errorText = text("最多同时播放 4 个音效，请先停止一个。", "Stop one effect before starting a fifth."); return }
+        let generation = effectsGeneration; pendingEffects.insert(song.id)
         playable(song.url) { [weak self] result in
-            guard let self = self else { return }
+            guard let self = self, self.effectsGeneration == generation, self.pendingEffects.remove(song.id) != nil else { return }
             switch result {
             case .failure(let error): self.errorText = error.localizedDescription
             case .success(let url):
                 guard self.effects.count < 4 else { return }
                 let player = AVPlayer(url: url); player.volume = Float(self.preferences.effectsVolume)
                 self.effects[song.id] = player; player.play()
-                NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: player.currentItem, queue: .main) { [weak self, weak player] _ in
-                    if self?.effects[song.id] === player { self?.effects.removeValue(forKey: song.id) }
+                self.effectObservers[song.id] = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: player.currentItem, queue: .main) { [weak self, weak player] _ in
+                    MainActor.assumeIsolated {
+                        if self?.effects[song.id] === player { self?.stopEffect(song.id) }
+                    }
                 }
             }
         }

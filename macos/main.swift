@@ -94,7 +94,7 @@ import AVFoundation
         NSWorkspace.shared.open(URL(string: "https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.6-macos.1")!)
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { sender.orderOut(nil); return false }
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply { board.stopAll(); board.save(); return .terminateNow }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply { board.stopAll(); board.save(); MediaTools.close(); return .terminateNow }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { window.makeKeyAndOrderFront(nil); return true }
 }
 

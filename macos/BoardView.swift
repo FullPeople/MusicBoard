@@ -64,7 +64,7 @@ import UniformTypeIdentifiers
                                     .contextMenu {
                                         Button(t("播放", "Play")) { board.play(song) }
                                         if song.url.isFileURL { Button(t("在访达中显示", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([song.url]) } }
-                                        if song.effect { Button(t("停止音效", "Stop Effect")) { if let player = board.effects.removeValue(forKey: song.id) { player.pause() } } }
+                                        if song.effect { Button(t("停止音效", "Stop Effect")) { board.stopEffect(song.id) } }
                                     }
                             }
                         }.padding(2)

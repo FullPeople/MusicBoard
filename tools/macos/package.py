@@ -79,6 +79,8 @@ finally:
 if not all(checks.values()): raise RuntimeError('Distribution check failed: '+json.dumps(checks))
 with image.open('rb') as stream: digest=hashlib.file_digest(stream,'sha256').hexdigest()
 record={'Passed':True,'Checks':checks,'ProductSource':json.loads((OUT/'build.json').read_text())['ProductSource'],'Version':'0.3.6-macos.1','Architecture':arch,'File':image.name,'Bytes':image.stat().st_size,'SHA256':digest,'NativeChecks':len(report['Checks']),'InstalledRepeatedChecks':len(installed_report['Checks']),'Signature':'Ad-hoc app signature only; no Developer ID/notarization','Scope':'Actual read-only DMG mount, exact file copy to an owned user install folder, real installed GUI/playback, normal fixture removal and preserved profile. No actual Finder drag/Gatekeeper/physical speakers claim.'}
+assessment=subprocess.run(['spctl','--assess','--type','execute','--verbose=2',str(APP)],capture_output=True,text=True,timeout=45)
+record['GatekeeperAssessment']={'ExitCode':assessment.returncode,'Details':(assessment.stdout+assessment.stderr).strip(),'Notarized':False}
 (dist/f'MusicBoard-macos-{arch}-validation.json').write_text(json.dumps(record,indent=2),encoding='utf-8')
 (dist/f'SHA256SUMS-macos-{arch}.txt').write_text(digest+'  '+image.name+'\n',encoding='utf-8')
 (dist/'开始使用 - Read Me.txt').write_text(readme,encoding='utf-8')
