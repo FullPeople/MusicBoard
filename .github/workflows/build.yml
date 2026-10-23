@@ -48,11 +48,30 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Update helper build failed' }
           Copy-Item -LiteralPath '.cache/update-helper/Release/FullToolsUpdater.exe' -Destination 'build/windows-x64/Release/FullToolsUpdater.exe'
       - name: Package
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.3.5
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.3.6
+      - name: Build and verify the native installation wizard
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri 'https://github.com/FullPeople/MusicBoard/releases/download/v0.3.5/MusicBoard-0.3.5-windows-x64.zip' -OutFile '.cache/installer-base.zip'
+          python tools/prepare_wizard_payload.py --base .cache/installer-base.zip --build-directory build/windows-x64/Release --output artifacts/packages/MusicBoard-0.3.6-wizard.1-windows-x64.zip
+          if ($LASTEXITCODE -ne 0) { throw 'Verified wizard payload preparation failed' }
+          cmake -S . -B build/windows-x64 '-DPAYLOAD_ZIP=${{ github.workspace }}/artifacts/packages/MusicBoard-0.3.6-wizard.1-windows-x64.zip'
+          if ($LASTEXITCODE -ne 0) { throw 'Wizard configuration failed' }
+          cmake --build build/windows-x64 --config Release --target musicboard_installer musicboard_extraction_probe actual_package_install_probe --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Wizard build failed' }
+          python tools/verify_wizard_staging.py --archive artifacts/packages/MusicBoard-0.3.6-wizard.1-windows-x64.zip --probe build/windows-x64/src/distribution/Release/MusicBoardExtractionProbe.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Wizard staging checks failed' }
+          python tools/verify_installer_wizard.py --installer build/windows-x64/src/distribution/Release/MusicBoardInstaller.exe --payload artifacts/packages/MusicBoard-0.3.6-wizard.1-windows-x64.zip --base .cache/installer-base.zip --transaction-probe build/windows-x64/Release/actual_package_install_probe.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Isolated wizard installation checks failed' }
+          python tools/make_portable_zip.py --payload artifacts/packages/MusicBoard-0.3.6-wizard.1-windows-x64.zip --output dist/MusicBoard-0.3.6-windows-x64.zip
+          if ($LASTEXITCODE -ne 0) { throw 'Portable package preparation failed' }
+          Copy-Item -LiteralPath 'build/windows-x64/src/distribution/Release/MusicBoardInstaller.exe' -Destination 'dist/MusicBoard-0.3.6-Setup-windows-x64.exe'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: MusicBoard-windows-x64
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*.exe
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

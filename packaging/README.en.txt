@@ -5,8 +5,10 @@ A native Windows soundboard for tabletop sessions. No music or sound effects are
 The link importer can stream supported HTTP audio without saving a library file.
 Online entries last for the current session; source access restrictions still apply.
 
-1. Extract the entire archive. Run MusicBoardSetup.exe to install without administrator rights,
-   or run MusicBoard.exe directly. English setup output: MusicBoardSetup.exe --lang en
+1. Run the single-file installer to review licenses and installation contents, choose a folder
+   and set the desktop shortcut option. Administrator rights are not required.
+   For the portable ZIP, extract the entire archive and run MusicBoardSetup.exe or MusicBoard.exe.
+   English installer: MusicBoardInstaller.exe --lang en; package backend: MusicBoardSetup.exe --lang en.
 2. Select a library containing BGM/<category>/<tracks> and SFX/<category>/<effects>.
 3. Click EN next to the pin button for English; the selection is remembered.
 
@@ -36,6 +38,9 @@ through bounded buffers. Startup and reload show real progress. Waveforms are ge
 
 Settings and caches are stored under %LOCALAPPDATA%\MusicBoard.
 Uninstalling keeps your library and user data. The portable executable also uses this settings folder.
+Installed copies check for updates after startup and continue checking while running, at most once
+per day automatically. Check for updates in the orb/tray menu also provides an explicit check.
+Download and installation require confirmation. Exit MusicBoard before installing an update.
 
 Source: https://github.com/FullPeople/MusicBoard
 License: MIT. See LICENSE.txt and THIRD_PARTY_NOTICES.txt.

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(MusicBoard VERSION 0.3.5 LANGUAGES C CXX RC)
+project(MusicBoard VERSION 0.3.6 LANGUAGES C CXX RC)
 add_compile_definitions(MUSICBOARD_PRODUCT_VERSION="${PROJECT_VERSION}")
 
 if(NOT WIN32)
@@ -191,6 +191,8 @@ set_target_properties(musicboard_setup PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS
 target_link_libraries(musicboard_setup PRIVATE musicboard_install musicboard_core shell32 ole32)
 set_target_properties(musicboard_setup PROPERTIES OUTPUT_NAME "MusicBoardSetup")
 
+add_subdirectory(src/distribution)
+
 # 阶段 2 的窗口 spike：透明覆盖层 + 无边框 + 自绘标题栏 + DPI + 中文文本
 add_executable(spike
     src/app/spike_main.cpp
@@ -244,8 +246,14 @@ if(MUSICBOARD_BUILD_TESTS)
     musicboard_add_test(single_instance_tests musicboard_core)
     musicboard_add_test(crash_reporter_tests musicboard_core)
     musicboard_add_test(sha256_tests musicboard_core)
+    musicboard_add_test(update_schedule_tests musicboard_core)
     musicboard_add_test(install_transaction_tests musicboard_install)
     musicboard_add_test(product_registration_tests musicboard_install)
+    add_executable(actual_package_install_probe tests/actual_package_install_probe.cpp)
+    musicboard_apply_compiler_options(actual_package_install_probe)
+    target_link_libraries(actual_package_install_probe PRIVATE musicboard_install)
+    target_link_options(actual_package_install_probe PRIVATE "/MANIFEST:EMBED"
+        "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/platform/desktop.manifest")
     musicboard_add_test(dpi_tests musicboard_platform)
     musicboard_add_test(global_hotkey_tests musicboard_platform)
     musicboard_add_test(container_probe_tests musicboard_audio)

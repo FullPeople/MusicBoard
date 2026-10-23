@@ -64,7 +64,7 @@ struct LibraryEntry final {
 
 class Application final {
 public:
-    Application() = default;
+    Application();
     ~Application();
 
     Application(const Application&) = delete;
@@ -385,7 +385,8 @@ private:
     // 上一次画出去的进度（用来判断"进度变了没"，避免每帧都重画整块）
     double last_drawn_progress_ = -1.0;
     std::chrono::steady_clock::time_point started_at_{};
-    bool update_check_started_ = false;
+    struct UpdateChecks;
+    std::unique_ptr<UpdateChecks> update_checks_;
 
     // 动效状态
     std::vector<float> bgm_hover_amounts_;

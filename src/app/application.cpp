@@ -2,16 +2,22 @@
 #include "app/application.h"
 
 #include "app/app_output.h"
-#include "app/update_client.h"
+#include "app/update_schedule.h"
 
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <windowsx.h>   // GET_X_LPARAM
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <system_error>
+#include <thread>
 
 #include "audio/waveform.h"
 #include "audio/preload_cache.h"
@@ -178,6 +184,261 @@ constexpr float kVolumeSliderWidth = 104.0f;
 }
 
 }  // namespace
+
+struct Application::UpdateChecks final {
+    enum class State { opened, already_running, failed };
+    struct Notice final {
+        State state = State::failed;
+        Failure failure;
+    };
+
+    ~UpdateChecks() { stop(); }
+
+    [[nodiscard]] bool start(Failure& failure) {
+        try {
+            worker_ = std::thread([this] { run(); });
+        } catch (const std::system_error& error) {
+            failure.set("updater.worker_start", error.what());
+            return false;
+        }
+        running_ = true;
+        return true;
+    }
+
+    void stop() {
+        {
+            std::lock_guard lock(mutex_);
+            stopped_ = true;
+        }
+        wake_.notify_one();
+        if (worker_.joinable()) worker_.join();
+        running_ = false;
+    }
+
+    [[nodiscard]] bool request_manual() {
+        if (!running_) return false;
+        {
+            std::lock_guard lock(mutex_);
+            manual_requested_ = true;
+        }
+        wake_.notify_one();
+        return true;
+    }
+
+    [[nodiscard]] bool take_notice(Notice& notice) {
+        if (!notice_ready_.load()) return false;
+        std::lock_guard lock(mutex_);
+        notice = std::move(*notice_);
+        notice_.reset();
+        notice_ready_.store(false);
+        return true;
+    }
+
+private:
+    struct Handle final {
+        HANDLE value = nullptr;
+        ~Handle() { reset(); }
+        void reset(HANDLE next = nullptr) noexcept {
+            if (value && value != INVALID_HANDLE_VALUE) ::CloseHandle(value);
+            value = next;
+        }
+    };
+
+    [[nodiscard]] static bool module_path(std::filesystem::path& path, Failure& failure) {
+        std::wstring value(32768, L'\0');
+        const DWORD length = ::GetModuleFileNameW(nullptr, value.data(), static_cast<DWORD>(value.size()));
+        if (!length || length >= value.size()) {
+            failure.set("updater.module_path", "GetModuleFileNameW Win32=" + std::to_string(::GetLastError()));
+            return false;
+        }
+        value.resize(length);
+        path = value;
+        return true;
+    }
+
+    [[nodiscard]] static bool read_timestamp(std::optional<std::uint64_t>& previous, Failure& failure) {
+        previous.reset();
+        wchar_t local[32768]{};
+        const DWORD length = ::GetEnvironmentVariableW(L"LOCALAPPDATA", local, static_cast<DWORD>(std::size(local)));
+        if (!length || length >= std::size(local)) {
+            failure.set("updater.marker_path", "LOCALAPPDATA is unavailable");
+            return false;
+        }
+        const auto marker = std::filesystem::path(local) / L"FullPeople" / L"UpdateChecks" / L"MusicBoard.timestamp";
+        Handle file;
+        file.value = ::CreateFileW(marker.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                   nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file.value == INVALID_HANDLE_VALUE) {
+            const DWORD error = ::GetLastError();
+            if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return true;
+            failure.set("updater.marker_read", "CreateFileW Win32=" + std::to_string(error));
+            return false;
+        }
+        std::uint64_t value = 0;
+        DWORD count = 0;
+        if (!::ReadFile(file.value, &value, sizeof(value), &count, nullptr)) {
+            failure.set("updater.marker_read", "ReadFile Win32=" + std::to_string(::GetLastError()));
+            return false;
+        }
+        if (count == sizeof(value)) previous = value;
+        return true;
+    }
+
+    [[nodiscard]] static std::uint64_t utc_filetime() noexcept {
+        FILETIME filetime{};
+        ::GetSystemTimeAsFileTime(&filetime);
+        ULARGE_INTEGER value{};
+        value.LowPart = filetime.dwLowDateTime;
+        value.HighPart = filetime.dwHighDateTime;
+        return value.QuadPart;
+    }
+
+    [[nodiscard]] static Notice launch(const std::filesystem::path& executable, bool background,
+                                       Handle& job, Handle& parent_process) {
+        Notice result;
+        const auto updater = executable.parent_path() / L"FullToolsUpdater.exe";
+        const DWORD attributes = ::GetFileAttributesW(updater.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
+            result.failure.set("updater.component_missing", "Install the complete distribution package");
+            return result;
+        }
+
+        // The updater stages a worker and exits. Track its descendants as well as
+        // the launcher, across manual requests and application restarts. Closing
+        // this job handle never terminates an update that the user has opened.
+        if (!job.value) {
+            job.value = ::CreateJobObjectW(nullptr, L"Local\\MusicBoard.UpdateProcessTree.v1");
+            if (!job.value) {
+                result.failure.set("updater.process_guard", "CreateJobObjectW Win32=" + std::to_string(::GetLastError()));
+                return result;
+            }
+        }
+        Handle launch_lock;
+        launch_lock.value = ::CreateMutexW(nullptr, FALSE, L"Local\\MusicBoard.UpdateLaunch.v1");
+        if (!launch_lock.value) {
+            result.failure.set("updater.process_guard", "CreateMutexW Win32=" + std::to_string(::GetLastError()));
+            return result;
+        }
+        const DWORD locked = ::WaitForSingleObject(launch_lock.value, 0);
+        if (locked == WAIT_TIMEOUT) {
+            result.state = State::already_running;
+            return result;
+        }
+        if (locked != WAIT_OBJECT_0 && locked != WAIT_ABANDONED) {
+            result.failure.set("updater.process_guard", "WaitForSingleObject Win32=" + std::to_string(::GetLastError()));
+            return result;
+        }
+        struct Unlock final {
+            HANDLE mutex;
+            ~Unlock() { ::ReleaseMutex(mutex); }
+        } unlock{launch_lock.value};
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+        if (!::QueryInformationJobObject(job.value, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), nullptr)) {
+            result.failure.set("updater.process_guard", "QueryInformationJobObject Win32=" + std::to_string(::GetLastError()));
+            return result;
+        }
+        if (accounting.ActiveProcesses != 0) {
+            result.state = State::already_running;
+            return result;
+        }
+
+        std::wstring version;
+        for (char c : std::string_view(MUSICBOARD_PRODUCT_VERSION)) version += static_cast<wchar_t>(static_cast<unsigned char>(c));
+        std::wstring command = L"\"" + updater.wstring() + L"\" --product MusicBoard --version " + version;
+        if (background) command += L" --background";
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        if (!::CreateProcessW(updater.c_str(), command.data(), nullptr, nullptr, FALSE,
+                              CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &startup, &process)) {
+            result.failure.set("updater.launch", "CreateProcessW Win32=" + std::to_string(::GetLastError()));
+            return result;
+        }
+        Handle thread;
+        thread.value = process.hThread;
+        parent_process.reset(process.hProcess);
+        const bool assigned = ::AssignProcessToJobObject(job.value, process.hProcess) != FALSE;
+        const DWORD assign_error = assigned ? ERROR_SUCCESS : ::GetLastError();
+        const bool resumed = assigned && ::ResumeThread(process.hThread) != static_cast<DWORD>(-1);
+        if (!resumed) {
+            const DWORD error = assigned ? ::GetLastError() : assign_error;
+            // This process is still suspended; never allow an untracked updater.
+            const BOOL terminated = ::TerminateProcess(process.hProcess, ERROR_CANCELLED);
+            const DWORD waited = terminated ? ::WaitForSingleObject(process.hProcess, 2000) : WAIT_FAILED;
+            result.failure.set("updater.process_guard", "Updater tracking/resume Win32=" + std::to_string(error) +
+                "; suspended process cleanup=" + std::to_string(waited));
+            return result;
+        }
+        result.state = State::opened;
+        return result;
+    }
+
+    void publish(Notice notice) {
+        std::lock_guard lock(mutex_);
+        notice_ = std::move(notice);
+        notice_ready_.store(true);
+    }
+
+    void run() {
+        UpdateSchedule schedule(UpdateSchedule::Clock::now());
+        Handle job, parent_process;
+        std::string last_background_error;
+        for (;;) {
+            bool manual = false;
+            {
+                std::unique_lock lock(mutex_);
+                wake_.wait_until(lock, schedule.next_probe(), [this] { return stopped_ || manual_requested_; });
+                if (stopped_) return;
+                manual = manual_requested_;
+                manual_requested_ = false;
+            }
+            const auto now = UpdateSchedule::Clock::now();
+            const bool probe = schedule.take_probe(now);
+            std::filesystem::path executable;
+            Failure failure;
+            if (!module_path(executable, failure)) {
+                report(LogLevel::warning, "Update check", failure.to_string());
+                if (manual) publish({State::failed, std::move(failure)});
+                continue;
+            }
+            if (manual) {
+                Notice notice = launch(executable, false, job, parent_process);
+                if (notice.state == State::opened) schedule.launched(now);
+                if (notice.state == State::failed) report(LogLevel::warning, "Update check", notice.failure.to_string());
+                publish(std::move(notice));
+            }
+            // Portable distributions keep the existing explicit manual check, but
+            // do not start automatic updates or create a persisted check marker.
+            if (!probe || _wcsicmp(executable.parent_path().filename().c_str(), L"current") != 0) continue;
+            std::optional<std::uint64_t> previous;
+            if (read_timestamp(previous, failure)) {
+                if (!schedule.background_due(now, utc_filetime(), previous)) continue;
+                Notice notice = launch(executable, true, job, parent_process);
+                if (notice.state == State::opened) schedule.launched(now);
+                failure = std::move(notice.failure);
+            }
+            if (!failure.empty()) {
+                if (last_background_error != failure.to_string()) {
+                    last_background_error = failure.to_string();
+                    report(LogLevel::warning, "Update check", last_background_error);
+                }
+            } else {
+                last_background_error.clear();
+            }
+        }
+    }
+
+    std::thread worker_;
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    bool running_ = false;
+    bool stopped_ = false;
+    bool manual_requested_ = false;
+    std::optional<Notice> notice_;
+    std::atomic<bool> notice_ready_{false};
+};
+
+Application::Application() = default;
 
 // ---------------------------------------------------------------------------
 // 初始化
@@ -352,6 +613,7 @@ ui::Point Application::to_ui_point(POINT client) const noexcept {
 }
 
 Application::~Application() {
+    if (update_checks_) update_checks_->stop();
     if(online_job_)online_job_->cancel();
     loader_.shutdown();
     // Window callbacks must end while every model/render/audio member is alive.
@@ -511,6 +773,13 @@ bool Application::create_windows(Failure& failure) {
 int Application::run() {
     if (g_panel_window == nullptr) {
         return 1;
+    }
+    // Self-tests do not enter run(), so they cannot contact the public updater.
+    update_checks_ = std::make_unique<UpdateChecks>();
+    Failure update_failure;
+    if (!update_checks_->start(update_failure)) {
+        report(LogLevel::warning, "Update check", update_failure.to_string());
+        set_status(tr("无法启动更新检查：", "Update check unavailable: ") + update_failure.to_string());
     }
     return g_panel_window->run_message_loop();
 }
@@ -766,9 +1035,10 @@ bool Application::handle_message(UINT message, WPARAM wparam, LPARAM lparam, LRE
                     show_link_import();
                     break;
                 case 21: {
-                    std::string error;
-                    if (!fulltools_update_client::launch(L"MusicBoard", MUSICBOARD_PRODUCT_VERSION, false, error))
-                        set_status(tr("无法检查更新：", "Update check unavailable: ") + error);
+                    if (update_checks_ && update_checks_->request_manual())
+                        set_status(tr("正在打开更新检查…", "Opening update check…"));
+                    else
+                        set_status(tr("更新检查服务不可用，请重新打开软件后重试。", "Update checks are unavailable. Reopen MusicBoard and try again."));
                     break;
                 }
                 case 1002:
@@ -855,11 +1125,16 @@ bool Application::handle_message(UINT message, WPARAM wparam, LPARAM lparam, LRE
 void Application::on_frame() {
     pump_link_import();
     const auto layer_now = std::chrono::steady_clock::now();
-    if (!update_check_started_ && layer_now - started_at_ >= std::chrono::seconds(10)) {
-        update_check_started_ = true;
-        std::string error;
-        if (!fulltools_update_client::launch(L"MusicBoard", MUSICBOARD_PRODUCT_VERSION, true, error))
-            report(LogLevel::warning, "Update check", error);
+    if (update_checks_) {
+        UpdateChecks::Notice notice;
+        if (update_checks_->take_notice(notice)) {
+            if (notice.state == UpdateChecks::State::opened)
+                set_status(tr("已打开更新检查。", "Update check opened."));
+            else if (notice.state == UpdateChecks::State::already_running)
+                set_status(tr("更新检查已在运行，请查看已打开的更新窗口。", "An update check is already running. Use the existing update window."));
+            else
+                set_status(tr("无法检查更新：", "Update check unavailable: ") + notice.failure.to_string());
+        }
     }
     if (layer_now - last_layer_repair_ >= std::chrono::milliseconds(200)) {
         last_layer_repair_ = layer_now;

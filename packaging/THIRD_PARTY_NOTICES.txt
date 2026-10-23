@@ -1,6 +1,15 @@
 MusicBoard ships the following third-party components.
 
 --------------------------------------------------------------------
+Native installation wizard
+--------------------------------------------------------------------
+The MusicBoard wizard adapts the FullTools installer under its MIT license.
+The original notice is included in LICENSES/FullTools-Installer-MIT.txt.
+ZIP extraction uses miniz; its MIT notice is included in LICENSES/miniz-LICENSE.txt.
+Source: https://github.com/FullPeople/FullOffice
+Source: https://github.com/richgel999/miniz
+
+--------------------------------------------------------------------
 stb_vorbis  (third_party/stb/stb_vorbis.c)
 --------------------------------------------------------------------
 Ogg Vorbis audio decoder, compiled into the executable.

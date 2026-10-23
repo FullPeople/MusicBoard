@@ -36,6 +36,8 @@ struct ProductRegistrationOptions final {
     std::filesystem::path executable_path;
     // 开始菜单快捷方式的位置（默认 %APPDATA%\Microsoft\Windows\Start Menu\Programs\音乐板.lnk）
     std::filesystem::path start_menu_shortcut;
+    std::filesystem::path desktop_shortcut;
+    bool desktop_shortcut_enabled = true;
     // 注册表子键名。默认 "MusicBoard"；测试会传别的名字，免得动到真产品。
     std::wstring uninstall_registry_subkey;
     std::string product_name = "音乐板";
@@ -48,6 +50,9 @@ struct ProductRegistrationOptions final {
 
 // 默认的开始菜单快捷方式路径
 [[nodiscard]] std::filesystem::path default_start_menu_shortcut();
+[[nodiscard]] std::filesystem::path default_desktop_shortcut();
+[[nodiscard]] bool registered_desktop_shortcut_enabled(const std::wstring& subkey,
+                                                       bool fallback = true);
 
 // 默认的注册表子键名
 [[nodiscard]] std::wstring default_uninstall_registry_subkey();

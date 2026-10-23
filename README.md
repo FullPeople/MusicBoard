@@ -1,6 +1,6 @@
 # MusicBoard
 
-[简体中文](README.zh-CN.md) · [Windows development release](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.5)
+[简体中文](README.zh-CN.md) · [Windows development release](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.6)
 
 A native Windows music and sound-effects board for tabletop sessions. Keep background music
 on one deck and trigger independent effects from four decks or a grid of DJ pads.
@@ -20,10 +20,19 @@ on one deck and trigger independent effects from four decks or a grid of DJ pads
 
 ## Download and use
 
-Download the Windows x64 ZIP from [Releases](https://github.com/FullPeople/MusicBoard/releases).
-Extract the whole archive, then run `MusicBoardSetup.exe` to install for the current user,
-or launch `MusicBoard.exe` directly. Choose **EN** next to the pin button for English.
+Download the Windows x64 single-file installer from [Releases](https://github.com/FullPeople/MusicBoard/releases).
+The 0.3.6 wizard provides license review, installation contents, folder selection, desktop shortcut
+options and progress based on actual work. For the portable ZIP, extract the whole archive and
+run `MusicBoardSetup.exe` to install, or launch `MusicBoard.exe` directly.
+Choose **EN** next to the pin button for English. The wizard also supports `--lang en`.
 No administrator rights or Visual C++ runtime installation is required.
+
+Installed copies check after startup and continue checking while running, at most once per day
+automatically. **Check for updates** in the orb/tray menu provides an immediate manual check.
+The existing signed updater requires confirmation before downloading and installing; exit MusicBoard
+before installation. Updates retain the chosen installation folder and desktop shortcut preference,
+and preserve the library and settings. See the [installer validation record](docs/validation/2026-10-23-installer-wizard.md)
+for the tested scope; visual smoothness and real monitor transitions require user testing.
 
 The [0.3.5 Windows development release](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.5)
 provides a single-file installer. The final package passed 10 ordinary upgrade, launch and uninstall
@@ -71,7 +80,7 @@ ctest --preset release --output-on-failure
 The main binary is `build/windows-x64/Release/musicboard.exe`. Package it with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.3.4
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -Version 0.3.6
 ```
 
 The source uses C++20, Win32, Direct2D/DirectWrite/DirectComposition and XAudio2.

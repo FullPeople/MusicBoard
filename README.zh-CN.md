@@ -1,6 +1,6 @@
 # 音乐板 MusicBoard
 
-[English](README.md) · [下载 Windows 开发版](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.5)
+[English](README.md) · [下载 Windows 开发版](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.6)
 
 用于跑团场景的 Windows 原生音乐与音效控制板。BGM 与 SFX 独立控制，支持四台唱盘和三列 DJ 按钮。
 
@@ -16,8 +16,15 @@
 
 ## 使用
 
-从 [Releases](https://github.com/FullPeople/MusicBoard/releases) 下载 Windows x64 ZIP，完整解压后运行
-`MusicBoardSetup.exe` 安装，也可直接启动 `MusicBoard.exe`。不需要管理员权限或额外安装 VC++ 运行库。
+从 [Releases](https://github.com/FullPeople/MusicBoard/releases) 下载 Windows x64 单文件安装包。
+0.3.6 安装向导提供许可阅读、安装内容、目录选择、桌面快捷方式选项和按实际工作量更新的进度。
+如果下载便携 ZIP，完整解压后运行 `MusicBoardSetup.exe` 安装，也可直接启动 `MusicBoard.exe`。
+不需要管理员权限或额外安装 VC++ 运行库；安装向导支持 `--lang en` 切换英文。
+
+安装版启动后会自动检查更新，长期开着时也会继续定期检查，每天最多自动检查一次。
+悬浮球或通知区域菜单中的“检查更新…”可立即手动检查。下载与安装仍需你确认，安装前请退出音乐板。
+升级保留原安装目录、桌面快捷方式选择、曲库和设置。[安装验证记录](docs/validation/2026-10-23-installer-wizard.md)
+单独说明测试范围；安装界面的实际流畅度和真实多屏切换仍由用户验收。
 
 [0.3.5 Windows 开发版](https://github.com/FullPeople/MusicBoard/releases/tag/v0.3.5) 提供独立安装包。最终包的普通升级、启动与卸载 10 项，以及旧版经官网签名联网更新的 17 项实际检查通过，保留偏好和测试曲库。七个公开来源的 63 项实际播放检查通过，另有组件在 30 秒断网后的 WAV／MP3 续传检查；组件、完整应用和公开升级的范围分别记录。[验证记录](docs/NETWORK-VALIDATION-20261014.md) 保留成功与失败。网易和酷我样本仅为试听。需要登录、付费、区域限制、过期地址或无确定时长的来源可能无法使用；播放中长期中断、所有歌曲和 macOS 仍在开发。
 
@@ -47,7 +54,7 @@ cmake --build --preset release
 ctest --preset release --output-on-failure
 ```
 
-输出为 `build/windows-x64/Release/musicboard.exe`。打包使用 `tools/package_release.ps1 -Version 0.3.4`，
+输出为 `build/windows-x64/Release/musicboard.exe`。打包使用 `tools/package_release.ps1 -Version 0.3.6`，
 默认包含安装与卸载验证。需要真实曲库的测试可设置 `MUSICBOARD_TEST_LIBRARY`；无设备/素材时对应测试跳过。
 贡献说明见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 

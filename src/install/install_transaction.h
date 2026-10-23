@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -58,6 +59,8 @@ struct VerifiedPackage final {
 struct VerifyOptions final {
     std::filesystem::path package_root;
     std::string expected_architecture = "windows-x64";
+    std::string expected_manifest_sha256;
+    std::function<void(std::uint64_t, std::uint64_t)> progress;
 };
 
 // 只校验，不安装。失败时 failure.context 会指出**是哪个文件、哪一条规则**。
@@ -88,6 +91,7 @@ enum class InstallPhase : std::uint32_t {
 struct InstallOptions final {
     VerifiedPackage package;
     std::filesystem::path install_root;
+    std::function<void(std::uint64_t, std::uint64_t)> progress;
 };
 
 struct InstallResult final {
@@ -99,7 +103,7 @@ struct InstallResult final {
     std::filesystem::path installed_executable;
 };
 
-// 安装或升级。已安装的版本相同则直接成功（幂等）。
+// 安装或升级。版本和文件清单均相同才直接成功（幂等）。
 [[nodiscard]] bool install_product(const InstallOptions& options, InstallResult& result,
                                  Failure& failure);
 

@@ -195,5 +195,41 @@ int main() {
         registry.check(!open_failure.empty(), "失败时给出原因");
     }
 
+    {
+        std::vector<std::uint8_t> data(1000000, static_cast<std::uint8_t>('a'));
+        std::uint64_t previous = 0;
+        unsigned callbacks = 0;
+        bool ordered = true;
+        Failure failure;
+        std::string digest;
+        registry.check(sha256_hex(data.data(), data.size(), digest, failure,
+            [&](std::uint64_t completed, std::uint64_t total) {
+                ordered = ordered && total == data.size() && completed >= previous && completed <= total;
+                previous = completed;
+                ++callbacks;
+                return true;
+            }), "分块校验可以报告实际工作量");
+        registry.check(ordered && previous == data.size() && callbacks > 2,
+                       "校验进度按实际字节单调递增到完整长度");
+        registry.check_eq(digest == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+                          "增加进度回调后仍符合 NIST 百万字符向量", digest);
+        failure.clear();
+        digest = "stale";
+        registry.check(!sha256_hex(data.data(), data.size(), digest, failure,
+            [](std::uint64_t completed, std::uint64_t) { return completed == 0; }),
+                       "取消校验后及时停止处理后续字节");
+        registry.check(failure.code == fail_code::cancelled && digest.empty(),
+                       "取消不会留下可被误认成功的摘要");
+        TempDir temp;
+        const auto path = temp.path() / L"取消后可删除.bin";
+        registry.check(musicboard::test::write_bytes(path, data), "准备可取消的文件校验");
+        failure.clear();
+        registry.check(!sha256_file_hex(path, digest, failure,
+            [](std::uint64_t completed, std::uint64_t) { return completed == 0; }),
+                       "文件校验也可在分块边界取消");
+        std::error_code ec;
+        registry.check(std::filesystem::remove(path, ec) && !ec,
+                       "取消后释放文件句柄");
+    }
     return registry.finish("sha256_tests");
 }

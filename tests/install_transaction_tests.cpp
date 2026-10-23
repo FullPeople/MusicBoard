@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "install/install_transaction.h"
+#include "install/transaction_lock.h"
 #include "core/path_utf8.h"
 #include "core/sha256.h"
 #include "tests/test_files.h"
@@ -509,6 +510,86 @@ int main() {
         // 再卸载一次：已经没了也算成功（幂等）
         UninstallResult again;
         registry.check(uninstall_product(uninstall, again, failure), "重复卸载不报错");
+    }
+
+    // =======================================================================
+    // 同版本修订、清单信任边界与真实进度
+    // =======================================================================
+    {
+        TempDir temp;
+        PackageFixture fixture;
+        static_cast<void>(fixture.build(temp.path() / L"pkg", "0.3.5", registry));
+        VerifyOptions verify;
+        verify.package_root = fixture.root;
+        Failure failure;
+        registry.check(sha256_file_hex(fixture.root / L"SHA256SUMS.txt", verify.expected_manifest_sha256, failure), "读取可信清单摘要");
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> verified;
+        verify.progress = [&](std::uint64_t done, std::uint64_t total) { verified.emplace_back(done, total); };
+        VerifiedPackage package;
+        registry.check(verify_install_package(verify, package, failure), "带预期清单摘要校验通过");
+        registry.check(!verified.empty() && verified.front().first == 0 &&
+                           verified.back().first == package.entries.size() &&
+                           verified.back().second == package.entries.size(), "校验进度对应实际文件总数");
+        verify.expected_manifest_sha256.assign(64, '0');
+        VerifiedPackage rejected;
+        Failure mismatch;
+        registry.check(!verify_install_package(verify, rejected, mismatch), "拒绝与可信摘要不一致的清单");
+        InstallOptions install;
+        install.package = package;
+        install.install_root = temp.path() / L"安装位置";
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> copied;
+        install.progress = [&](std::uint64_t done, std::uint64_t total) { copied.emplace_back(done, total); };
+        InstallResult result;
+        registry.check(install_product(install, result, failure), "旧修订安装成功");
+        const auto expected_bytes = package.total_bytes + std::filesystem::file_size(fixture.root / L"SHA256SUMS.txt");
+        registry.check(!copied.empty() && copied.front().first == 0 && copied.back().first == expected_bytes &&
+                           copied.back().second == expected_bytes, "复制进度对应真实完成字节数");
+        bool monotonic = true;
+        for (std::size_t index = 1; index < copied.size(); ++index) monotonic &= copied[index].first >= copied[index - 1].first && copied[index].first <= copied[index].second;
+        registry.check(monotonic, "复制进度单调且不超出总量");
+        copied.clear();
+        registry.check(install_product(install, result, failure) && copied.empty(), "相同版本及清单重复安装保持幂等");
+        registry.check(musicboard::test::write_text(fixture.root / L"MusicBoard.exe", "相同版本的新安装修订"), "准备同版本新文件");
+        registry.check(fixture.write_manifest(registry), "为新修订生成新清单");
+        registry.check(verify_install_package({fixture.root}, install.package, failure), "校验同版本新修订");
+        copied.clear();
+        registry.check(install_product(install, result, failure) && result.upgraded && !copied.empty(), "同版本不同清单实际覆盖安装");
+        std::string actual;
+        registry.check(sha256_file_hex(install.install_root / L"current" / L"MusicBoard.exe", actual, failure) &&
+                           sha256_file_hex(fixture.root / L"MusicBoard.exe", verify.expected_manifest_sha256, failure) &&
+                           actual == verify.expected_manifest_sha256, "覆盖后主程序与新修订逐字节一致");
+    }
+
+    {
+        TempDir temp;
+        const auto unrelated = temp.path() / L"用户曲库";
+        std::filesystem::create_directories(unrelated);
+        registry.check(musicboard::test::write_text(unrelated / L"保留.mp3", "保留用户文件"), "准备无关目录");
+        UninstallResult removed;
+        Failure failure;
+        registry.check(!uninstall_product({unrelated}, removed, failure) &&
+                           std::filesystem::is_regular_file(unrelated / L"保留.mp3"), "拒绝卸载未登记的无关目录");
+    }
+
+    // =======================================================================
+    // 安装与卸载使用同一个按目录命名的跨进程锁
+    // =======================================================================
+    {
+        TempDir temp;
+        const auto root = temp.path() / L"事务目录";
+        std::wstring first, second, other;
+        Failure failure;
+        registry.check(transaction_mutex_name(root, first, failure) &&
+                           transaction_mutex_name(root / L".", second, failure) && first == second,
+                       "同目录的点路径与末尾分隔符使用同一事务锁");
+        auto uppercase = root.native();
+        ::CharUpperBuffW(uppercase.data(), static_cast<DWORD>(uppercase.size()));
+        registry.check(transaction_mutex_name(uppercase, second, failure) && first == second,
+                       "大小写不同的同一安装位置使用同一事务锁");
+        registry.check(transaction_mutex_name(temp.path() / L"其他目录", other, failure) && first != other,
+                       "不同安装位置不会互相阻塞");
+        registry.check(first.starts_with(L"Local\\MusicBoard.Setup.Transaction.") && first.size() == 99,
+                       "事务锁使用固定命名空间与 SHA-256 目录摘要");
     }
 
     // =======================================================================

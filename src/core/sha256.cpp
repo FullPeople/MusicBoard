@@ -5,6 +5,7 @@
 #include <bcrypt.h>
 
 #include <array>
+#include <algorithm>
 #include <cctype>
 #include <vector>
 
@@ -78,8 +79,17 @@ private:
 
 }  // namespace
 
-bool sha256_hex(const std::uint8_t* data, std::size_t size, std::string& out, Failure& failure) {
+bool sha256_hex(const std::uint8_t* data, std::size_t size, std::string& out, Failure& failure,
+                const Sha256Progress& progress) {
     out.clear();
+    if (size != 0 && data == nullptr) {
+        failure.set(fail_code::invalid_argument, "SHA-256 input is missing");
+        return false;
+    }
+    if (progress && !progress(0, size)) {
+        failure.set(fail_code::cancelled, "SHA-256 verification cancelled");
+        return false;
+    }
 
     AlgorithmHandle algorithm;
     if (!algorithm.open(failure)) {
@@ -106,10 +116,16 @@ bool sha256_hex(const std::uint8_t* data, std::size_t size, std::string& out, Fa
         return false;
     }
 
-    if (size > 0) {
-        status = ::BCryptHashData(hash.get(), const_cast<PUCHAR>(data), static_cast<ULONG>(size), 0);
+    for (std::size_t completed = 0; completed < size;) {
+        const auto count = std::min(kChunkBytes, size - completed);
+        status = ::BCryptHashData(hash.get(), const_cast<PUCHAR>(data + completed), static_cast<ULONG>(count), 0);
         if (status < 0) {
             failure.set(fail_code::platform_api_failed, "SHA-256 处理数据失败");
+            return false;
+        }
+        completed += count;
+        if (progress && !progress(completed, size)) {
+            failure.set(fail_code::cancelled, "SHA-256 verification cancelled");
             return false;
         }
     }
@@ -125,7 +141,8 @@ bool sha256_hex(const std::uint8_t* data, std::size_t size, std::string& out, Fa
     return true;
 }
 
-bool sha256_file_hex(const std::filesystem::path& path, std::string& out, Failure& failure) {
+bool sha256_file_hex(const std::filesystem::path& path, std::string& out, Failure& failure,
+                     const Sha256Progress& progress) {
     out.clear();
 
     const HANDLE file = ::CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
@@ -134,6 +151,18 @@ bool sha256_file_hex(const std::filesystem::path& path, std::string& out, Failur
         failure.set(fail_code::file_open_failed,
                     "无法打开 " + path_to_utf8(path) + "（Win32 错误 " +
                         std::to_string(::GetLastError()) + "）");
+        return false;
+    }
+    LARGE_INTEGER file_size{};
+    if (::GetFileSizeEx(file, &file_size) == FALSE || file_size.QuadPart < 0) {
+        failure.set(fail_code::file_read_failed, "Cannot determine SHA-256 input length");
+        ::CloseHandle(file);
+        return false;
+    }
+    const auto total = static_cast<std::uint64_t>(file_size.QuadPart);
+    if (progress && !progress(0, total)) {
+        failure.set(fail_code::cancelled, "SHA-256 verification cancelled");
+        ::CloseHandle(file);
         return false;
     }
 
@@ -164,6 +193,7 @@ bool sha256_file_hex(const std::filesystem::path& path, std::string& out, Failur
 
     // 流式读：安装包里的文件可能几百 MB，整个读进内存既浪费又会在低内存机器上失败
     std::vector<std::uint8_t> buffer(kChunkBytes);
+    std::uint64_t completed = 0;
     for (;;) {
         DWORD read = 0;
         if (::ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr) ==
@@ -180,6 +210,12 @@ bool sha256_file_hex(const std::filesystem::path& path, std::string& out, Failur
         status = ::BCryptHashData(hash.get(), buffer.data(), read, 0);
         if (status < 0) {
             failure.set(fail_code::platform_api_failed, "SHA-256 处理数据失败");
+            ::CloseHandle(file);
+            return false;
+        }
+        completed += read;
+        if (progress && !progress(completed, total)) {
+            failure.set(fail_code::cancelled, "SHA-256 verification cancelled");
             ::CloseHandle(file);
             return false;
         }

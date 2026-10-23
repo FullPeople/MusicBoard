@@ -200,7 +200,9 @@ struct Journal final {
 // ---------------------------------------------------------------------------
 
 [[nodiscard]] bool copy_tree(const std::filesystem::path& source,
-                             const std::filesystem::path& target, Failure& failure) {
+                             const std::filesystem::path& target, Failure& failure,
+                             const std::function<void(std::uint64_t, std::uint64_t)>& progress,
+                             std::uint64_t total_bytes) {
     std::error_code ec;
     std::filesystem::create_directories(target, ec);
     if (ec) {
@@ -208,6 +210,8 @@ struct Journal final {
                     "创建目录失败 " + path_to_utf8(target) + ": " + ec.message());
         return false;
     }
+    std::uint64_t copied = 0;
+    if (progress) progress(0, total_bytes);
     for (const auto& entry : std::filesystem::recursive_directory_iterator(source, ec)) {
         const std::filesystem::path relative = std::filesystem::relative(entry.path(), source, ec);
         if (ec) {
@@ -232,6 +236,13 @@ struct Journal final {
                             path_to_utf8(destination) + ": " + ec.message());
             return false;
         }
+        const auto bytes = entry.file_size(ec);
+        if (ec) {
+            failure.set(fail_code::file_read_failed, "读取复制文件大小失败: " + ec.message());
+            return false;
+        }
+        copied += bytes;
+        if (progress) progress(copied, total_bytes);
     }
     return true;
 }
@@ -370,6 +381,12 @@ bool verify_install_package(const VerifyOptions& options, VerifiedPackage& packa
     if (!sha256_file_hex(manifest_path, package.manifest_sha256, failure)) {
         return false;
     }
+    if (!options.expected_manifest_sha256.empty() &&
+        (!is_hex_digest(options.expected_manifest_sha256) ||
+         !digest_equals(package.manifest_sha256, options.expected_manifest_sha256))) {
+        failure.set(fail_code::file_read_failed, "安装文件清单与安装向导验证的清单不一致");
+        return false;
+    }
     std::ifstream manifest(manifest_path, std::ios::binary);
     if (!manifest) {
         failure.set(fail_code::file_not_found,
@@ -408,6 +425,8 @@ bool verify_install_package(const VerifyOptions& options, VerifiedPackage& packa
 
     // ---- 逐条校验 ----
     std::map<std::string, bool> listed;
+    std::uint64_t verified_files = 0;
+    if (options.progress) options.progress(0, entries.size());
     for (const InstallPackageEntry& entry : entries) {
         std::string relative_text = entry.relative_path;
         // 统一分隔符，免得清单里写 "a\b" 而实际是 "a/b"（或者反过来）
@@ -459,6 +478,12 @@ bool verify_install_package(const VerifyOptions& options, VerifiedPackage& packa
         }
         listed[lowercase(relative_text)] = true;
         package.total_bytes += std::filesystem::file_size(full, ec);
+        if (ec) {
+            failure.set(fail_code::file_read_failed, "读取校验文件大小失败: " + relative_text);
+            return false;
+        }
+        ++verified_files;
+        if (options.progress) options.progress(verified_files, entries.size());
     }
 
     // ---- 包内不许有清单之外的文件 ----
@@ -529,6 +554,28 @@ bool install_product(const InstallOptions& options, InstallResult& result, Failu
     }
 
     std::error_code ec;
+    if (!options.install_root.is_absolute() || options.install_root.lexically_normal() == options.install_root.root_path()) {
+        failure.set(fail_code::invalid_argument, "安装位置必须是单独的完整目录，不能使用磁盘根目录");
+        return false;
+    }
+    std::filesystem::path checked;
+    for (const auto& component : options.install_root) {
+        checked /= component;
+        if (is_reparse_point(checked)) {
+            failure.set(fail_code::invalid_argument, "安装路径包含重解析点，已拒绝");
+            return false;
+        }
+    }
+    if (std::filesystem::exists(options.install_root, ec) &&
+        !std::filesystem::is_empty(options.install_root, ec) &&
+        !std::filesystem::is_regular_file(journal_path(options.install_root), ec)) {
+        failure.set(fail_code::invalid_argument, "所选目录已有其他文件，请为音乐板选择单独的目录");
+        return false;
+    }
+    if (ec) {
+        failure.set(fail_code::file_open_failed, "无法检查安装目录: " + ec.message());
+        return false;
+    }
     std::filesystem::create_directories(options.install_root, ec);
     if (ec) {
         failure.set(fail_code::file_open_failed,
@@ -591,7 +638,12 @@ bool install_product(const InstallOptions& options, InstallResult& result, Failu
 
     // ---- 幂等：已经装的是同一个版本就不重复劳动 ----
     const std::string existing = installed_version(options.install_root);
-    if (existing == options.package.version &&
+    std::string existing_manifest;
+    Failure manifest_failure;
+    const bool same_manifest = sha256_file_hex(current / L"SHA256SUMS.txt", existing_manifest,
+                                               manifest_failure) &&
+                               digest_equals(existing_manifest, options.package.manifest_sha256);
+    if (existing == options.package.version && same_manifest &&
         std::filesystem::is_regular_file(current / std::filesystem::path(
                                                        std::wstring(
                                                            options.package.executable_name.begin(),
@@ -624,7 +676,13 @@ bool install_product(const InstallOptions& options, InstallResult& result, Failu
             return false;
         }
     }
-    if (!copy_tree(options.package.root, candidate, failure)) {
+    const auto manifest_bytes = std::filesystem::file_size(options.package.root / L"SHA256SUMS.txt", ec);
+    if (ec) {
+        failure.set(fail_code::file_read_failed, "读取安装文件清单大小失败: " + ec.message());
+        return false;
+    }
+    if (!copy_tree(options.package.root, candidate, failure, options.progress,
+                   options.package.total_bytes + manifest_bytes)) {
         // 抄失败就把候选删掉，不留下一个不完整的目录 ——
         // 它下一次会被误判成"上次的候选"
         std::uintmax_t removed = 0;
@@ -681,7 +739,7 @@ bool install_product(const InstallOptions& options, InstallResult& result, Failu
         }
     }
     next.phase = InstallPhase::committed;
-    static_cast<void>(write_journal(options.install_root, next, failure));
+    if (!write_journal(options.install_root, next, failure)) return false;
 
     result.installed_version = options.package.version;
     result.installed_executable =
@@ -704,6 +762,11 @@ bool uninstall_product(const UninstallOptions& options, UninstallResult& result,
     std::error_code ec;
     if (!std::filesystem::exists(options.install_root, ec)) {
         return true;   // 已经没了就是想要的终态
+    }
+    if (!options.install_root.is_absolute() || options.install_root.lexically_normal() == options.install_root.root_path() ||
+        !std::filesystem::is_regular_file(journal_path(options.install_root), ec) || is_reparse_point(options.install_root)) {
+        failure.set(fail_code::invalid_argument, "无法确认这是音乐板的安装目录，未删除任何文件");
+        return false;
     }
 
     result.removed_version = installed_version(options.install_root);

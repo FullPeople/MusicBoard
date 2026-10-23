@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,15 +24,16 @@ namespace musicboard {
 
 inline constexpr std::size_t sha256_digest_bytes = 32;
 inline constexpr std::size_t sha256_hex_length = 64;
+using Sha256Progress = std::function<bool(std::uint64_t completed, std::uint64_t total)>;
 
 // 一段内存的 SHA256，返回小写十六进制
 [[nodiscard]] bool sha256_hex(const std::uint8_t* data, std::size_t size, std::string& out,
-                             Failure& failure);
+                             Failure& failure, const Sha256Progress& progress = {});
 
 // 一个文件的 SHA256。**流式读取**：安装包里的文件可能几百 MB，
 // 整个读进内存既浪费又会在低内存机器上失败。
 [[nodiscard]] bool sha256_file_hex(const std::filesystem::path& path, std::string& out,
-                                  Failure& failure);
+                                  Failure& failure, const Sha256Progress& progress = {});
 
 // 校验一个十六进制摘要串的格式（长度 64、全是十六进制字符）。大小写不限。
 [[nodiscard]] bool is_hex_digest(std::string_view text) noexcept;

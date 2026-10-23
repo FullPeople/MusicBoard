@@ -40,6 +40,7 @@ ProductRegistrationOptions make_options(const std::filesystem::path& temp,
     options.uninstaller_path = options.install_root / L"current" / L"MusicBoardSetup.exe";
     options.executable_path = options.install_root / L"current" / L"MusicBoard.exe";
     options.start_menu_shortcut = temp / L"开始菜单" / L"音乐板.lnk";
+    options.desktop_shortcut = temp / L"桌面" / L"音乐板.lnk";
     options.uninstall_registry_subkey = subkey;
     options.product_name = "音乐板";
     options.publisher = "MusicBoard";
@@ -114,6 +115,17 @@ int main() {
                 registry.check_eq(std::wstring(buffer) == L"音乐板",
                                   "DisplayName 就是「音乐板」这三个字（不是逐字节加宽的乱码）",
                                   path_to_utf8(std::filesystem::path(buffer)));
+                wchar_t uninstall[4096]{};
+                size = sizeof(uninstall);
+                registry.check(::RegQueryValueExW(key, L"UninstallString", nullptr, &type,
+                               reinterpret_cast<BYTE*>(uninstall), &size) == ERROR_SUCCESS,
+                               "读取完整卸载命令");
+                const std::wstring command = uninstall;
+                registry.check(command.find(L"--install-root \"" + options.install_root.wstring() + L"\"") != std::wstring::npos &&
+                                   command.find(L"--registry-subkey \"" + subkey + L"\"") != std::wstring::npos &&
+                                   command.find(L"--shortcut-path \"" + options.start_menu_shortcut.wstring() + L"\"") != std::wstring::npos &&
+                                   command.find(L"--desktop-shortcut-path \"" + options.desktop_shortcut.wstring() + L"\"") != std::wstring::npos,
+                               "卸载命令保留自选安装位置与全部隔离参数");
                 ::RegCloseKey(key);
             }
         }
@@ -160,6 +172,34 @@ int main() {
         registry.check(!apply_product_registration(options, failure) &&
                            failure.code == fail_code::invalid_argument,
                        "没有安装目录 → 明确拒绝");
+    }
+
+    {
+        TempDir temp;
+        auto options = make_options(temp.path(), subkey);
+        Failure failure;
+        registry.check(apply_product_registration(options, failure), "启用私有桌面快捷方式");
+        registry.check(std::filesystem::is_regular_file(options.desktop_shortcut) &&
+                           registered_desktop_shortcut_enabled(subkey, false), "桌面选项及链接均已保存");
+        options.desktop_shortcut_enabled = false;
+        registry.check(apply_product_registration(options, failure) && !std::filesystem::exists(options.desktop_shortcut) &&
+                           !registered_desktop_shortcut_enabled(subkey, true), "关闭选项移除自己的桌面链接并持久保留选择");
+        auto broken = options;
+        broken.desktop_shortcut_enabled = true;
+        broken.product_version = "9.9.9";
+        const auto blocked = temp.path() / L"不允许建目录";
+        registry.check(musicboard::test::write_text(blocked, "这里已经是一个文件"), "准备可重复的快捷方式写入失败");
+        broken.desktop_shortcut = blocked / L"音乐板.lnk";
+        Failure write_failure;
+        registry.check(!apply_product_registration(broken, write_failure) && registered_version(subkey) == "0.1.0" &&
+                           !registered_desktop_shortcut_enabled(subkey, true), "注册失败恢复原版本和桌面选择，不清掉旧安装登记");
+        registry.check(musicboard::test::write_text(options.desktop_shortcut, "用户自己的同名文件"), "准备不属于音乐板的同名桌面文件");
+        registry.check(apply_product_registration(options, failure) && std::filesystem::is_regular_file(options.desktop_shortcut), "选项关闭时保留外来同名文件");
+        options.desktop_shortcut_enabled = true;
+        Failure collision;
+        registry.check(!apply_product_registration(options, collision) &&
+                           std::filesystem::file_size(options.desktop_shortcut) == std::string("用户自己的同名文件").size(), "拒绝覆盖外来桌面文件");
+        registry.check(remove_product_registration(options, failure) && std::filesystem::is_regular_file(options.desktop_shortcut), "卸载保留外来桌面文件");
     }
 
     // =======================================================================
